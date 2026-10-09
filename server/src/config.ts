@@ -9,7 +9,7 @@ const envSchema = z.object({
   AUTO_APPLY_CONFIDENCE: z.coerce.number().min(0).max(1).default(0.85),
 
   // Optional until the step that uses them; each consumer asserts its own.
-  ANTHROPIC_API_KEY: optional,
+  GROQ_API_KEY: optional,
   GOOGLE_CLIENT_ID: optional,
   GOOGLE_CLIENT_SECRET: optional,
   ALLOWED_EMAIL: optional,
