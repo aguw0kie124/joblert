@@ -1,0 +1,32 @@
+{
+  "name": "@tracker/server",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./status": "./src/status.ts"
+  },
+  "scripts": {
+    "dev": "tsx watch --env-file-if-exists=../.env src/api/server.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/api/server.js",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx --env-file-if-exists=../.env src/db/migrate.ts"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.45.4",
+    "fastify": "^5.12.5",
+    "pg": "^8.23.1",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
+    "@types/node": "^24.19.1",
+    "@types/pg": "^8.23.1",
+    "drizzle-kit": "^0.31.11",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.3"
+  }
+}
