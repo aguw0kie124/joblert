@@ -1,28 +1,7 @@
-import path from "node:path";
-import { PGlite } from "@electric-sql/pglite";
 import { eq } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/pglite";
-import { migrate } from "drizzle-orm/pglite/migrator";
 import { expect, test } from "vitest";
 import * as schema from "../src/db/schema.ts";
-
-const migrationsFolder = path.resolve(import.meta.dirname, "../migrations");
-
-async function freshDb() {
-  const db = drizzle(new PGlite(), { schema });
-  await migrate(db, { migrationsFolder });
-  return db;
-}
-
-type TestDb = Awaited<ReturnType<typeof freshDb>>;
-
-async function createUser(db: TestDb, name: string) {
-  const [user] = await db
-    .insert(schema.users)
-    .values({ googleSub: `sub-${name}`, email: `${name}@example.com` })
-    .returning();
-  return user!;
-}
+import { createUser, freshDb } from "./helpers/db.ts";
 
 const emailRow = (userId: string, gmailMessageId: string) => ({
   userId,

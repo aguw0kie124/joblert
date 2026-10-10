@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { drizzle } from "drizzle-orm/node-postgres";
+import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import pg from "pg";
 import type { Config } from "../config.ts";
 import * as schema from "./schema.ts";
@@ -24,4 +25,5 @@ export function createDb(config: Pick<Config, "DATABASE_URL" | "DATABASE_CA_CERT
   return { db: drizzle(pool, { schema }), pool };
 }
 
-export type Db = ReturnType<typeof createDb>["db"];
+/** Any Postgres driver, and transactions on it: node-postgres in production, PGlite in tests. */
+export type Db = PgDatabase<PgQueryResultHKT, typeof schema>;
