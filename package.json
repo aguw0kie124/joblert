@@ -10,7 +10,6 @@
     "build": "npm run build -w server && npm run build -w web",
     "typecheck": "npm run typecheck -w server && npm run typecheck -w web",
     "test": "npm run test -w server",
-    "db:up": "docker compose up -d",
     "db:generate": "npm run db:generate -w server",
     "db:migrate": "npm run db:migrate -w server"
   }
