@@ -8,6 +8,13 @@
       "when": 1791561367454,
       "tag": "0000_eager_omega_sentinel",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1791667048040,
+      "tag": "0001_multi_tenant",
+      "breakpoints": true
     }
   ]
 }

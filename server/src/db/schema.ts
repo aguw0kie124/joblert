@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { index, jsonb, pgTable, real, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { index, jsonb, pgTable, real, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
 import {
   EMAIL_KINDS,
   PROCESSED_STATES,
@@ -11,10 +11,28 @@ import {
 
 const timestamptz = (name: string) => timestamp(name, { withTimezone: true });
 
+// Row-level security is enabled on every table with no policies. That shuts out Supabase's auto-generated
+// web API; the app connects to Postgres directly as the owner role, which is not subject to it.
+
+export const users = pgTable("users", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  // Google's stable account id. Email addresses can change; this cannot.
+  googleSub: text("google_sub").notNull().unique(),
+  email: text("email").notNull(),
+  createdAt: timestamptz("created_at").notNull().defaultNow(),
+}).enableRLS();
+
+// Every row below belongs to exactly one user, and every query must filter by it.
+const userId = () =>
+  uuid("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" });
+
 export const applications = pgTable(
   "applications",
   {
     id: uuid("id").primaryKey().defaultRandom(),
+    userId: userId(),
     company: text("company").notNull(),
     role: text("role").notNull(),
     jobUrl: text("job_url"),
@@ -28,16 +46,19 @@ export const applications = pgTable(
     createdAt: timestamptz("created_at").notNull().defaultNow(),
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
   },
-  (t) => [index("applications_status_idx").on(t.status), index("applications_company_idx").on(t.company)],
-);
+  (t) => [
+    index("applications_user_status_idx").on(t.userId, t.status),
+    index("applications_user_company_idx").on(t.userId, t.company),
+  ],
+).enableRLS();
 
 // Extracted fields only; full bodies are never stored.
 export const emails = pgTable(
   "emails",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    // Unique so reprocessing the same message is a no-op.
-    gmailMessageId: text("gmail_message_id").notNull().unique(),
+    userId: userId(),
+    gmailMessageId: text("gmail_message_id").notNull(),
     threadId: text("thread_id").notNull(),
     sender: text("sender").notNull(),
     subject: text("subject").notNull(),
@@ -47,14 +68,20 @@ export const emails = pgTable(
     applicationId: uuid("application_id").references(() => applications.id, { onDelete: "set null" }),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
   },
-  (t) => [index("emails_thread_idx").on(t.threadId), index("emails_application_idx").on(t.applicationId)],
-);
+  (t) => [
+    // Unique per inbox, so reprocessing the same message is a no-op.
+    unique("emails_user_message_unique").on(t.userId, t.gmailMessageId),
+    index("emails_user_thread_idx").on(t.userId, t.threadId),
+    index("emails_application_idx").on(t.applicationId),
+  ],
+).enableRLS();
 
 // Audit log: every status change records what caused it, so it can be reverted.
 export const events = pgTable(
   "events",
   {
     id: uuid("id").primaryKey().defaultRandom(),
+    userId: userId(),
     applicationId: uuid("application_id")
       .notNull()
       .references(() => applications.id, { onDelete: "cascade" }),
@@ -73,13 +100,14 @@ export const events = pgTable(
     revertedAt: timestamptz("reverted_at"),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
   },
-  (t) => [index("events_application_idx").on(t.applicationId, t.occurredAt)],
-);
+  (t) => [index("events_application_idx").on(t.applicationId, t.occurredAt), index("events_user_idx").on(t.userId)],
+).enableRLS();
 
 export const reviewItems = pgTable(
   "review_items",
   {
     id: uuid("id").primaryKey().defaultRandom(),
+    userId: userId(),
     emailId: uuid("email_id")
       .notNull()
       .references(() => emails.id, { onDelete: "cascade" }),
@@ -93,21 +121,20 @@ export const reviewItems = pgTable(
     resolvedAt: timestamptz("resolved_at"),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
   },
-  (t) => [index("review_items_open_idx").on(t.resolvedAt)],
-);
+  (t) => [index("review_items_user_open_idx").on(t.userId, t.resolvedAt)],
+).enableRLS();
 
-// Single row ("gmail") holding the poll cursor.
+// One row per user: the Gmail poll cursor.
 export const syncState = pgTable("sync_state", {
-  id: text("id").primaryKey(),
+  userId: userId().primaryKey(),
   historyId: text("history_id"),
   lastRunAt: timestamptz("last_run_at"),
-});
+}).enableRLS();
 
-// Single row ("google").
+// One row per user: the Gmail refresh token, encrypted with TOKEN_ENCRYPTION_KEY.
 export const oauthTokens = pgTable("oauth_tokens", {
-  id: text("id").primaryKey(),
-  email: text("email").notNull(),
+  userId: userId().primaryKey(),
   refreshTokenEncrypted: text("refresh_token_encrypted").notNull(),
   scope: text("scope").notNull(),
   updatedAt: timestamptz("updated_at").notNull().defaultNow(),
-});
+}).enableRLS();
