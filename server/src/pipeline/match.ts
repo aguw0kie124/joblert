@@ -12,6 +12,7 @@ export interface MatchEmail {
 export interface MatchCandidate {
   id: string;
   company: string;
+  /** Empty when the application was logged from an email that named no role. */
   role: string;
   appliedAt: Date;
   /** Gmail threads already linked to this application. */
@@ -92,8 +93,8 @@ export function matchEmail(email: MatchEmail, candidates: readonly MatchCandidat
     const company = companyEvidence(email, candidate);
     if (company === 0) continue;
 
-    let role = 0.5; // neutral when the email names no role
-    if (email.role) {
+    let role = 0.5; // neutral when either side names no role
+    if (email.role && roleTokens(candidate.role).size > 0) {
       const similarity = roleSimilarity(email.role, candidate.role);
       if (similarity.overlap < ROLE_CONTRADICTION) continue;
       role = similarity.jaccard;

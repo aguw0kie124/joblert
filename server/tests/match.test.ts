@@ -53,6 +53,11 @@ describe("matchEmail", () => {
     expect(result).toMatchObject({ type: "match", applicationId: "data" });
   });
 
+  test("matches an application logged without a role, whatever role the email names", () => {
+    const result = matchEmail(email({ role: "Data Scientist" }), [application({ id: "a", role: "" })]);
+    expect(result).toMatchObject({ type: "match", applicationId: "a" });
+  });
+
   test("is ambiguous when two applications at the company fit and the email names no role", () => {
     const result = matchEmail(email({ role: null }), [
       application({ id: "backend" }),
