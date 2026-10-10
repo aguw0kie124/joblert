@@ -21,7 +21,7 @@ export type Source = (typeof SOURCES)[number];
 export const PROCESSED_STATES = ["pending", "processed", "ignored", "needs_review", "failed"] as const;
 export type ProcessedState = (typeof PROCESSED_STATES)[number];
 
-export const REVIEW_REASONS = ["low_confidence", "ambiguous_match", "no_match"] as const;
+export const REVIEW_REASONS = ["low_confidence", "ambiguous_match", "no_match", "status_conflict"] as const;
 export type ReviewReason = (typeof REVIEW_REASONS)[number];
 
 export const REVIEW_RESOLUTIONS = ["accepted", "reassigned", "ignored"] as const;
