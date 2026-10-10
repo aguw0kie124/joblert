@@ -11,6 +11,7 @@
     "start": "node dist/api/server.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "eval:classifier": "tsx --env-file-if-exists=../.env scripts/eval-classifier.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx --env-file-if-exists=../.env src/db/migrate.ts"
   },
