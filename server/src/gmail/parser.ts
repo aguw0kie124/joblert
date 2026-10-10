@@ -17,6 +17,7 @@ export interface GmailPart {
 export interface GmailMessage {
   id: string;
   threadId: string;
+  labelIds?: string[] | null;
   /** Epoch milliseconds, as a string. */
   internalDate?: string | null;
   payload?: GmailPart | null;

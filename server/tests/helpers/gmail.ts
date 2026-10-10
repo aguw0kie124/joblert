@@ -10,6 +10,9 @@ export const multipart = (subtype: string, ...parts: GmailPart[]): GmailPart => 
 });
 
 interface MessageOptions {
+  id?: string;
+  threadId?: string;
+  labelIds?: string[];
   from?: string;
   subject?: string;
   internalDate?: string | null;
@@ -19,6 +22,9 @@ interface MessageOptions {
 
 /** Builds a message shaped like the Gmail API's `users.messages.get` response with format=full. */
 export function gmailMessage({
+  id = "msg-1",
+  threadId = "thread-1",
+  labelIds,
   from = "Acme Recruiting <no-reply@greenhouse.io>",
   subject = "Thank you for applying to Acme",
   internalDate = "1760000000000",
@@ -26,8 +32,9 @@ export function gmailMessage({
   body,
 }: MessageOptions): GmailMessage {
   return {
-    id: "msg-1",
-    threadId: "thread-1",
+    id,
+    threadId,
+    ...(labelIds ? { labelIds } : {}),
     internalDate,
     payload: {
       ...body,
