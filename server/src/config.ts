@@ -10,6 +10,7 @@ const envSchema = z.object({
 
   // Optional until the step that uses them; each consumer asserts its own.
   GROQ_API_KEY: optional,
+  GROQ_MODEL: z.string().min(1).default("openai/gpt-oss-120b"),
   GOOGLE_CLIENT_ID: optional,
   GOOGLE_CLIENT_SECRET: optional,
   ALLOWED_EMAIL: optional,
