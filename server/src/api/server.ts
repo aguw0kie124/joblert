@@ -1,20 +1,29 @@
-import Fastify from "fastify";
-import { sql } from "drizzle-orm";
-import { loadConfig } from "../config.ts";
+import { createGoogleOAuth } from "../auth/google.ts";
+import { loadConfig, publicUrl, requireConfig } from "../config.ts";
 import { createDb } from "../db/client.ts";
+import { buildApp } from "./app.ts";
 
-const config = loadConfig();
+const config = requireConfig(loadConfig(), [
+  "GOOGLE_CLIENT_ID",
+  "GOOGLE_CLIENT_SECRET",
+  "SESSION_SECRET",
+  "TOKEN_ENCRYPTION_KEY",
+]);
 const { db, pool } = createDb(config);
+const baseUrl = publicUrl(config);
 
-const app = Fastify({ logger: true });
-
-app.get("/api/health", async (_req, reply) => {
-  try {
-    await db.execute(sql`select 1`);
-    return { ok: true, db: "up" };
-  } catch {
-    return reply.code(503).send({ ok: false, db: "down" });
-  }
+const app = await buildApp({
+  db,
+  oauth: createGoogleOAuth({
+    clientId: config.GOOGLE_CLIENT_ID,
+    clientSecret: config.GOOGLE_CLIENT_SECRET,
+    redirectUri: `${baseUrl}/auth/google/callback`,
+  }),
+  sessionSecret: config.SESSION_SECRET,
+  tokenEncryptionKey: config.TOKEN_ENCRYPTION_KEY,
+  publicUrl: baseUrl,
+  webUrl: config.WEB_URL ?? baseUrl,
+  logger: true,
 });
 
 app.addHook("onClose", async () => {

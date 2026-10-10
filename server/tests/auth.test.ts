@@ -1,0 +1,230 @@
+import { eq } from "drizzle-orm";
+import type { FastifyInstance } from "fastify";
+import { beforeEach, describe, expect, test, vi } from "vitest";
+import { buildApp } from "../src/api/app.ts";
+import { GMAIL_SCOPE, GoogleAuthError, type GoogleOAuth, type GoogleSignIn } from "../src/auth/google.ts";
+import { decrypt, deriveKey } from "../src/auth/secrets.ts";
+import * as schema from "../src/db/schema.ts";
+import { freshDb, type TestDb } from "./helpers/db.ts";
+
+const TOKEN_SECRET = "t".repeat(40);
+const WEB_URL = "http://localhost:5173";
+
+const signIn = (overrides: Partial<GoogleSignIn> = {}): GoogleSignIn => ({
+  sub: "google-sam",
+  email: "sam@example.com",
+  refreshToken: "refresh-token-1",
+  scope: `openid email ${GMAIL_SCOPE}`,
+  ...overrides,
+});
+
+let db: TestDb;
+let app: FastifyInstance;
+let exchangeCode: ReturnType<typeof vi.fn<GoogleOAuth["exchangeCode"]>>;
+
+async function build(publicUrl = "http://localhost:3000") {
+  const oauth: GoogleOAuth = {
+    authUrl: (state) => `https://accounts.google.test/auth?state=${state}`,
+    exchangeCode,
+    refreshAccessToken: async () => "access-token",
+  };
+  return buildApp({
+    db,
+    oauth,
+    sessionSecret: "s".repeat(40),
+    tokenEncryptionKey: TOKEN_SECRET,
+    publicUrl,
+    webUrl: WEB_URL,
+  });
+}
+
+beforeEach(async () => {
+  db = await freshDb();
+  exchangeCode = vi.fn<GoogleOAuth["exchangeCode"]>(async () => signIn());
+  app = await build();
+});
+
+/** The session cookie from a response, in the form a browser would send back. */
+function cookieFrom(response: { cookies: { name: string; value: string }[] }): string {
+  const cookie = response.cookies.find((c) => c.name === "joblert_session");
+  return cookie ? `${cookie.name}=${encodeURIComponent(cookie.value)}` : "";
+}
+
+/** Starts a sign-in the way a browser would, returning the cookie and the state Google would echo back. */
+async function start() {
+  const response = await app.inject({ method: "GET", url: "/auth/google" });
+  const state = new URL(response.headers.location as string).searchParams.get("state")!;
+  return { cookie: cookieFrom(response), state, response };
+}
+
+async function completeSignIn() {
+  const { cookie, state } = await start();
+  const response = await app.inject({
+    method: "GET",
+    url: `/auth/google/callback?code=the-code&state=${state}`,
+    headers: { cookie },
+  });
+  return { response, cookie: cookieFrom(response) };
+}
+
+const me = (cookie?: string) =>
+  app.inject({ method: "GET", url: "/api/me", headers: cookie ? { cookie } : {} });
+
+describe("signing in", () => {
+  test("starts by sending the browser to Google with a fresh state", async () => {
+    const first = await start();
+    const second = await start();
+    expect(first.response.statusCode).toBe(302);
+    expect(first.response.headers.location).toContain("https://accounts.google.test/auth?state=");
+    expect(first.state).not.toBe(second.state);
+  });
+
+  test("creates the user, stores the refresh token encrypted, and opens a session", async () => {
+    const { response, cookie } = await completeSignIn();
+
+    expect(response.statusCode).toBe(302);
+    expect(response.headers.location).toBe(WEB_URL);
+    expect(exchangeCode).toHaveBeenCalledWith("the-code");
+
+    const [user] = await db.select().from(schema.users);
+    expect(user).toMatchObject({ googleSub: "google-sam", email: "sam@example.com" });
+    const [token] = await db.select().from(schema.oauthTokens);
+    expect(token!.refreshTokenEncrypted).not.toContain("refresh-token-1");
+    expect(decrypt(token!.refreshTokenEncrypted, deriveKey(TOKEN_SECRET, "refresh-token"))).toBe("refresh-token-1");
+
+    const profile = await me(cookie);
+    expect(profile.json()).toEqual({ id: user!.id, email: "sam@example.com", gmailConnected: true, lastSyncAt: null });
+  });
+
+  test("signing in again keeps the same user and replaces the token", async () => {
+    await completeSignIn();
+    exchangeCode.mockResolvedValueOnce(signIn({ email: "sam.new@example.com", refreshToken: "refresh-token-2" }));
+    await completeSignIn();
+
+    const users = await db.select().from(schema.users);
+    expect(users).toMatchObject([{ googleSub: "google-sam", email: "sam.new@example.com" }]);
+    const tokens = await db.select().from(schema.oauthTokens);
+    expect(tokens).toHaveLength(1);
+    expect(decrypt(tokens[0]!.refreshTokenEncrypted, deriveKey(TOKEN_SECRET, "refresh-token"))).toBe(
+      "refresh-token-2",
+    );
+  });
+
+  test("two Google accounts become two users", async () => {
+    await completeSignIn();
+    exchangeCode.mockResolvedValueOnce(signIn({ sub: "google-alex", email: "alex@example.com" }));
+    const alex = await completeSignIn();
+
+    expect(await db.select().from(schema.users)).toHaveLength(2);
+    expect((await me(alex.cookie)).json()).toMatchObject({ email: "alex@example.com" });
+  });
+
+  test("the session cookie is hidden from scripts, and Secure when served over HTTPS", async () => {
+    const local = (await completeSignIn()).response.headers["set-cookie"] as string;
+    expect(local).toMatch(/HttpOnly/i);
+    expect(local).toMatch(/SameSite=Lax/i);
+    expect(local).not.toMatch(/Secure/i);
+
+    app = await build("https://joblert.example.com");
+    const hosted = (await start()).response.headers["set-cookie"] as string;
+    expect(hosted).toMatch(/Secure/i);
+  });
+});
+
+describe("sign-ins that must not succeed", () => {
+  const expectRejected = async (response: { headers: Record<string, unknown> }, error: string) => {
+    expect(response.headers.location).toBe(`${WEB_URL}?auth_error=${error}`);
+    expect(await db.select().from(schema.users)).toEqual([]);
+  };
+
+  test("a state that doesn't match the one this browser was given", async () => {
+    const { cookie } = await start();
+    const response = await app.inject({
+      method: "GET",
+      url: "/auth/google/callback?code=the-code&state=forged",
+      headers: { cookie },
+    });
+    await expectRejected(response, "failed");
+    expect(exchangeCode).not.toHaveBeenCalled();
+  });
+
+  test("a callback from a browser that never started a sign-in", async () => {
+    const { state } = await start();
+    const response = await app.inject({ method: "GET", url: `/auth/google/callback?code=the-code&state=${state}` });
+    await expectRejected(response, "failed");
+  });
+
+  test("a state used a second time", async () => {
+    const { cookie, state } = await start();
+    const url = `/auth/google/callback?code=the-code&state=${state}`;
+    const first = await app.inject({ method: "GET", url, headers: { cookie } });
+    const replay = await app.inject({ method: "GET", url, headers: { cookie: cookieFrom(first) } });
+
+    expect(replay.headers.location).toBe(`${WEB_URL}?auth_error=failed`);
+    expect(exchangeCode).toHaveBeenCalledTimes(1);
+  });
+
+  test("the user cancelling at Google", async () => {
+    const { cookie, state } = await start();
+    const response = await app.inject({
+      method: "GET",
+      url: `/auth/google/callback?error=access_denied&state=${state}`,
+      headers: { cookie },
+    });
+    await expectRejected(response, "denied");
+  });
+
+  test("the user leaving the Gmail permission unticked", async () => {
+    exchangeCode.mockResolvedValueOnce(signIn({ scope: "openid email" }));
+    await expectRejected((await completeSignIn()).response, "gmail_scope");
+  });
+
+  test("Google refusing the code", async () => {
+    exchangeCode.mockRejectedValueOnce(new GoogleAuthError("invalid_grant", "code already used"));
+    await expectRejected((await completeSignIn()).response, "failed");
+  });
+});
+
+describe("sessions", () => {
+  test("no cookie, or a made-up one, is not signed in", async () => {
+    expect((await me()).statusCode).toBe(401);
+    expect((await me("joblert_session=forged-value")).statusCode).toBe(401);
+  });
+
+  test("a cookie sealed with a different secret is not accepted", async () => {
+    const { cookie } = await completeSignIn();
+    const other = await buildApp({
+      db,
+      oauth: { authUrl: () => "", exchangeCode, refreshAccessToken: async () => "" },
+      sessionSecret: "x".repeat(40),
+      tokenEncryptionKey: TOKEN_SECRET,
+      publicUrl: "http://localhost:3000",
+      webUrl: WEB_URL,
+    });
+    expect((await other.inject({ method: "GET", url: "/api/me", headers: { cookie } })).statusCode).toBe(401);
+  });
+
+  test("logging out ends the session", async () => {
+    const { cookie } = await completeSignIn();
+    const logout = await app.inject({ method: "POST", url: "/auth/logout", headers: { cookie } });
+
+    expect(logout.statusCode).toBe(204);
+    expect((await me(cookieFrom(logout))).statusCode).toBe(401);
+  });
+
+  test("a session for a deleted account is signed out", async () => {
+    const { cookie } = await completeSignIn();
+    await db.delete(schema.users);
+    expect((await me(cookie)).statusCode).toBe(401);
+  });
+
+  test("the profile reports when Gmail needs reconnecting, and the last sync", async () => {
+    const { cookie } = await completeSignIn();
+    const [user] = await db.select().from(schema.users);
+    const lastRunAt = new Date("2026-10-10T12:00:00Z");
+    await db.insert(schema.syncState).values({ userId: user!.id, historyId: "1", lastRunAt });
+    await db.delete(schema.oauthTokens).where(eq(schema.oauthTokens.userId, user!.id));
+
+    expect((await me(cookie)).json()).toMatchObject({ gmailConnected: false, lastSyncAt: lastRunAt.toISOString() });
+  });
+});
