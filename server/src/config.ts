@@ -4,6 +4,8 @@ const optional = z.string().min(1).optional();
 
 const envSchema = z.object({
   DATABASE_URL: z.string().min(1),
+  // Path to the database provider's CA certificate (PEM). Enables certificate verification.
+  DATABASE_CA_CERT: optional,
   PORT: z.coerce.number().int().positive().default(3000),
   // Emails classified below this confidence go to the review queue instead of auto-applying.
   AUTO_APPLY_CONFIDENCE: z.coerce.number().min(0).max(1).default(0.85),

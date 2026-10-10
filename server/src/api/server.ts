@@ -4,7 +4,7 @@ import { loadConfig } from "../config.ts";
 import { createDb } from "../db/client.ts";
 
 const config = loadConfig();
-const { db, pool } = createDb(config.DATABASE_URL);
+const { db, pool } = createDb(config);
 
 const app = Fastify({ logger: true });
 
