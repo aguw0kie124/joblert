@@ -92,6 +92,23 @@ test("a rejected token fails at once with an auth error", async () => {
   expect(fetchMock).toHaveBeenCalledTimes(1);
 });
 
+const googleError = (status: number, reason: string) => json({ error: { errors: [{ reason }] } }, status);
+
+test("a disabled Gmail API fails at once and says what to fix", async () => {
+  const { gmail, fetchMock } = setup(googleError(403, "accessNotConfigured"));
+  await expect(gmail.getHistoryId()).rejects.toMatchObject({
+    code: "auth",
+    message: "Gmail returned HTTP 403 for profile: the Gmail API is not enabled in the Google Cloud project",
+  });
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
+test("a 403 that is really a rate limit is retried", async () => {
+  const { gmail, sleep } = setup(googleError(403, "userRateLimitExceeded"), json({ historyId: "5" }));
+  await expect(gmail.getHistoryId()).resolves.toBe("5");
+  expect(sleep).toHaveBeenCalledTimes(1);
+});
+
 test("an unexpected response shape is an error, not a silent empty result", async () => {
   await expect(setup(json({ nope: true })).gmail.getHistoryId()).rejects.toMatchObject({ code: "failed" });
 });

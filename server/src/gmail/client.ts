@@ -65,6 +65,16 @@ const messageSchema = z.looseObject({ id: z.string(), threadId: z.string() });
 // Mail the user wrote, or that Gmail has already set aside.
 const SKIPPED_LABELS = new Set(["SENT", "DRAFT", "CHAT", "SPAM", "TRASH"]);
 
+const RATE_LIMIT_REASONS = new Set(["rateLimitExceeded", "userRateLimitExceeded"]);
+
+const errorSchema = z.object({ error: z.object({ errors: z.array(z.object({ reason: z.string() })).min(1) }) });
+
+/** Google's machine-readable reason for an error response, or "" when there isn't one. */
+async function errorReason(response: Response): Promise<string> {
+  const parsed = errorSchema.safeParse(await response.json().catch(() => null));
+  return parsed.success ? parsed.data.error.errors[0]!.reason : "";
+}
+
 export const hasSkippedLabel = (labelIds: readonly string[] | null | undefined) =>
   labelIds?.some((label) => SKIPPED_LABELS.has(label)) ?? false;
 
@@ -93,11 +103,19 @@ export function createGmailClient(options: GmailClientOptions): GmailClient {
       if (response.status === 404) return null;
       if (response.status === 401) throw new GmailError("auth", "Gmail rejected the access token");
 
-      // 403 is how Gmail reports per-user rate limits as well as real permission errors.
-      const retryable = response.status === 429 || response.status === 403 || response.status >= 500;
+      // 403 covers both rate limits, which pass, and permission problems, which don't.
+      const reason = await errorReason(response);
+      const retryable =
+        response.status === 429 ||
+        response.status >= 500 ||
+        (response.status === 403 && RATE_LIMIT_REASONS.has(reason));
       if (!retryable || attempt >= MAX_RETRIES) {
         const code = response.status === 403 ? "auth" : "failed";
-        throw new GmailError(code, `Gmail returned HTTP ${response.status} for ${path.split("/")[1]}`);
+        const detail =
+          reason === "accessNotConfigured"
+            ? ": the Gmail API is not enabled in the Google Cloud project"
+            : reason && `: ${reason}`;
+        throw new GmailError(code, `Gmail returned HTTP ${response.status} for ${path.split("/")[1]}${detail}`);
       }
       await sleep(1000 * 2 ** attempt);
     }
