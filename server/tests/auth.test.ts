@@ -79,7 +79,13 @@ describe("signing in", () => {
     expect(decrypt(token!.refreshTokenEncrypted, deriveKey(TOKEN_SECRET, "refresh-token"))).toBe("refresh-token-1");
 
     const profile = await me(cookie);
-    expect(profile.json()).toEqual({ id: user!.id, email: "sam@example.com", gmailConnected: true, lastSyncAt: null });
+    expect(profile.json()).toEqual({
+      id: user!.id,
+      email: "sam@example.com",
+      gmailConnected: true,
+      lastSyncAt: null,
+      syncing: expect.any(Boolean),
+    });
   });
 
   test("signing in again keeps the same user and replaces the token", async () => {

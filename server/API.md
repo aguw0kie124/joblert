@@ -16,7 +16,7 @@ Statuses: `applied`, `oa`, `interview`, `offer`, `rejected`.
 | `GET /auth/google` | Redirects to Google sign-in |
 | `GET /auth/google/callback` | Google's return URL. Redirects to the web app, with `?auth_error=denied\|gmail_scope\|failed` on failure |
 | `POST /auth/logout` | Ends the session. `204` |
-| `GET /api/me` | `{ id, email, gmailConnected, lastSyncAt }` |
+| `GET /api/me` | `{ id, email, gmailConnected, lastSyncAt, syncing }`. `syncing` is true while a sync of this inbox is running |
 | `DELETE /api/me` | Deletes the account and all its data, and revokes Google access. `204` |
 | `POST /api/sync` | Starts a sync in the background: reads mail that arrived since the last one. `202`. `409` `sync_in_progress` or `gmail_disconnected`. Rarely needed: mail is synced as it arrives |
 

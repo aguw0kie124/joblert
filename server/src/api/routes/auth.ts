@@ -121,6 +121,7 @@ export async function authRoutes(app: FastifyInstance, { db, oauth, tokenKey, we
       // False once Google stops accepting the stored token; the user signs in again to reconnect.
       gmailConnected: token !== undefined,
       lastSyncAt: sync?.lastRunAt ?? null,
+      syncing: runner.isRunning(user.id),
     };
   });
 }
