@@ -25,7 +25,12 @@ const storeToken = () =>
   });
 
 function connector(fetchMock?: typeof fetch) {
-  const oauth: GoogleOAuth = { authUrl: () => "", exchangeCode: async () => Promise.reject(), refreshAccessToken };
+  const oauth: GoogleOAuth = {
+    authUrl: () => "",
+    exchangeCode: async () => Promise.reject(),
+    refreshAccessToken,
+    revokeToken: async () => {},
+  };
   return createGmailConnector({ db, oauth, tokenKey, fetch: fetchMock });
 }
 

@@ -4,6 +4,8 @@ import Fastify, { type FastifyInstance } from "fastify";
 import type { GoogleOAuth } from "../auth/google.ts";
 import { deriveKey } from "../auth/secrets.ts";
 import type { Db } from "../db/client.ts";
+import type { IngestDeps } from "../pipeline/ingest.ts";
+import { protectedRoutes } from "./protected.ts";
 import { authRoutes } from "./routes/auth.ts";
 
 declare module "@fastify/secure-session" {
@@ -21,6 +23,8 @@ export interface AppOptions {
   oauth: GoogleOAuth;
   sessionSecret: string;
   tokenEncryptionKey: string;
+  /** How a sync started from the dashboard reads and classifies mail. */
+  ingest: Omit<IngestDeps, "db">;
   /** Cookies are marked Secure when the app is served over HTTPS. */
   publicUrl: string;
   /** Where the browser lands after signing in. */
@@ -53,12 +57,9 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     }
   });
 
-  await app.register(authRoutes, {
-    db: options.db,
-    oauth: options.oauth,
-    tokenKey: deriveKey(options.tokenEncryptionKey, "refresh-token"),
-    webUrl: options.webUrl,
-  });
+  const tokenKey = deriveKey(options.tokenEncryptionKey, "refresh-token");
+  await app.register(authRoutes, { db: options.db, oauth: options.oauth, tokenKey, webUrl: options.webUrl });
+  await app.register(protectedRoutes, { db: options.db, oauth: options.oauth, tokenKey, ingest: options.ingest });
 
   return app;
 }

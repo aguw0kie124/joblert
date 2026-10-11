@@ -1,71 +1,36 @@
 import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
-import { beforeEach, describe, expect, test, vi } from "vitest";
-import { buildApp } from "../src/api/app.ts";
-import { GMAIL_SCOPE, GoogleAuthError, type GoogleOAuth, type GoogleSignIn } from "../src/auth/google.ts";
+import { beforeEach, describe, expect, test } from "vitest";
+import { GoogleAuthError } from "../src/auth/google.ts";
 import { decrypt, deriveKey } from "../src/auth/secrets.ts";
 import * as schema from "../src/db/schema.ts";
+import {
+  completeSignIn as signInThrough,
+  cookieFrom,
+  fakeOAuth,
+  googleSignIn as signIn,
+  startSignIn,
+  testApp,
+  TOKEN_SECRET,
+  WEB_URL,
+  type FakeOAuth,
+} from "./helpers/app.ts";
 import { freshDb, type TestDb } from "./helpers/db.ts";
-
-const TOKEN_SECRET = "t".repeat(40);
-const WEB_URL = "http://localhost:5173";
-
-const signIn = (overrides: Partial<GoogleSignIn> = {}): GoogleSignIn => ({
-  sub: "google-sam",
-  email: "sam@example.com",
-  refreshToken: "refresh-token-1",
-  scope: `openid email ${GMAIL_SCOPE}`,
-  ...overrides,
-});
 
 let db: TestDb;
 let app: FastifyInstance;
-let exchangeCode: ReturnType<typeof vi.fn<GoogleOAuth["exchangeCode"]>>;
-
-async function build(publicUrl = "http://localhost:3000") {
-  const oauth: GoogleOAuth = {
-    authUrl: (state) => `https://accounts.google.test/auth?state=${state}`,
-    exchangeCode,
-    refreshAccessToken: async () => "access-token",
-  };
-  return buildApp({
-    db,
-    oauth,
-    sessionSecret: "s".repeat(40),
-    tokenEncryptionKey: TOKEN_SECRET,
-    publicUrl,
-    webUrl: WEB_URL,
-  });
-}
+let oauth: FakeOAuth;
+let exchangeCode: FakeOAuth["exchangeCode"];
 
 beforeEach(async () => {
   db = await freshDb();
-  exchangeCode = vi.fn<GoogleOAuth["exchangeCode"]>(async () => signIn());
-  app = await build();
+  oauth = fakeOAuth();
+  exchangeCode = oauth.exchangeCode;
+  app = await testApp(db, oauth);
 });
 
-/** The session cookie from a response, in the form a browser would send back. */
-function cookieFrom(response: { cookies: { name: string; value: string }[] }): string {
-  const cookie = response.cookies.find((c) => c.name === "joblert_session");
-  return cookie ? `${cookie.name}=${encodeURIComponent(cookie.value)}` : "";
-}
-
-/** Starts a sign-in the way a browser would, returning the cookie and the state Google would echo back. */
-async function start() {
-  const response = await app.inject({ method: "GET", url: "/auth/google" });
-  const state = new URL(response.headers.location as string).searchParams.get("state")!;
-  return { cookie: cookieFrom(response), state, response };
-}
-
-async function completeSignIn() {
-  const { cookie, state } = await start();
-  const response = await app.inject({
-    method: "GET",
-    url: `/auth/google/callback?code=the-code&state=${state}`,
-    headers: { cookie },
-  });
-  return { response, cookie: cookieFrom(response) };
-}
+const start = () => startSignIn(app);
+const completeSignIn = () => signInThrough(app);
 
 const me = (cookie?: string) =>
   app.inject({ method: "GET", url: "/api/me", headers: cookie ? { cookie } : {} });
@@ -125,7 +90,7 @@ describe("signing in", () => {
     expect(local).toMatch(/SameSite=Lax/i);
     expect(local).not.toMatch(/Secure/i);
 
-    app = await build("https://joblert.example.com");
+    app = await testApp(db, oauth, { publicUrl: "https://joblert.example.com" });
     const hosted = (await start()).response.headers["set-cookie"] as string;
     expect(hosted).toMatch(/Secure/i);
   });
@@ -193,14 +158,7 @@ describe("sessions", () => {
 
   test("a cookie sealed with a different secret is not accepted", async () => {
     const { cookie } = await completeSignIn();
-    const other = await buildApp({
-      db,
-      oauth: { authUrl: () => "", exchangeCode, refreshAccessToken: async () => "" },
-      sessionSecret: "x".repeat(40),
-      tokenEncryptionKey: TOKEN_SECRET,
-      publicUrl: "http://localhost:3000",
-      webUrl: WEB_URL,
-    });
+    const other = await testApp(db, oauth, { sessionSecret: "x".repeat(40) });
     expect((await other.inject({ method: "GET", url: "/api/me", headers: { cookie } })).statusCode).toBe(401);
   });
 

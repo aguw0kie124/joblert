@@ -24,5 +24,7 @@ export type ProcessedState = (typeof PROCESSED_STATES)[number];
 export const REVIEW_REASONS = ["low_confidence", "ambiguous_match", "no_match", "status_conflict"] as const;
 export type ReviewReason = (typeof REVIEW_REASONS)[number];
 
-export const REVIEW_RESOLUTIONS = ["accepted", "reassigned", "ignored"] as const;
+// accepted: applied to a suggested application. reassigned: applied to a different one.
+// created: logged as a new application. ignored: dismissed.
+export const REVIEW_RESOLUTIONS = ["accepted", "reassigned", "created", "ignored"] as const;
 export type ReviewResolution = (typeof REVIEW_RESOLUTIONS)[number];
