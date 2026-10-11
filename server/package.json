@@ -13,6 +13,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "eval:classifier": "tsx --env-file-if-exists=../.env scripts/eval-classifier.ts",
+    "eval:sample": "tsx --env-file-if-exists=../.env scripts/eval-sample.ts",
+    "eval:inbox": "tsx --env-file-if-exists=../.env scripts/eval-inbox.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx --env-file-if-exists=../.env src/db/migrate.ts"
   },

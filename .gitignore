@@ -6,3 +6,6 @@ dist/
 .DS_Store
 
 CLAUDE.md
+
+# Real mail pulled for the accuracy check
+server/eval/

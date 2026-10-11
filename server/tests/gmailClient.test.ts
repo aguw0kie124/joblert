@@ -42,6 +42,22 @@ test("history is paged, de-duplicated, and skips sent mail", async () => {
   expect(url(1).searchParams.get("pageToken")).toBe("page-2");
 });
 
+test("recent mail is listed across pages, newest first", async () => {
+  const { gmail, url } = setup(
+    json({ messages: [{ id: "m9", threadId: "t9" }, { id: "m8", threadId: "t8" }], nextPageToken: "page-2" }),
+    json({ messages: [{ id: "m7", threadId: "t7" }] }),
+  );
+
+  await expect(gmail.listRecent(60)).resolves.toEqual(["m9", "m8", "m7"]);
+  expect(url(0).pathname).toBe("/gmail/v1/users/me/messages");
+  expect(url(0).searchParams.get("q")).toBe("newer_than:60d");
+  expect(url(1).searchParams.get("pageToken")).toBe("page-2");
+});
+
+test("an empty mailbox lists nothing", async () => {
+  await expect(setup(json({ resultSizeEstimate: 0 })).gmail.listRecent(60)).resolves.toEqual([]);
+});
+
 test("watching posts the topic and limits notifications to the inbox", async () => {
   const { gmail, fetchMock, url } = setup(json({ historyId: "900", expiration: "1791561367454" }));
 

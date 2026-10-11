@@ -36,6 +36,8 @@ export interface GmailClient {
   getHistoryId(): Promise<string>;
   /** Ids of messages added after `historyId`, oldest first, and the cursor to store for next time. */
   listAddedSince(historyId: string): Promise<{ messageIds: string[]; historyId: string }>;
+  /** Ids of messages from the last `days` days, newest first. Only the accuracy sample reads back like this. */
+  listRecent(days: number): Promise<string[]>;
   /** The full message, or null if it no longer exists. */
   getMessage(id: string): Promise<GmailMessage | null>;
   /**
@@ -69,6 +71,11 @@ const historySchema = z.object({
     .optional(),
   nextPageToken: z.string().optional(),
   historyId: z.string(),
+});
+
+const listSchema = z.object({
+  messages: z.array(z.object({ id: z.string() })).optional(),
+  nextPageToken: z.string().optional(),
 });
 
 const messageSchema = z.looseObject({ id: z.string(), threadId: z.string() });
@@ -200,6 +207,18 @@ export function createGmailClient(options: GmailClientOptions): GmailClient {
         pageToken = page.nextPageToken;
       } while (pageToken);
       return { messageIds: [...ids], historyId: latest };
+    },
+
+    async listRecent(days) {
+      const ids: string[] = [];
+      let pageToken: string | undefined;
+      do {
+        const body = await call("/messages", { q: `newer_than:${days}d`, maxResults: String(PAGE_SIZE), pageToken });
+        const page = parse(listSchema, body, "message list");
+        ids.push(...(page.messages ?? []).map((m) => m.id));
+        pageToken = page.nextPageToken;
+      } while (pageToken);
+      return ids;
     },
 
     async getMessage(id) {

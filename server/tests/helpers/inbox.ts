@@ -34,6 +34,10 @@ export class FakeGmail implements GmailClient {
     return { messageIds: this.history === "all" ? oldestFirst : this.history, historyId: this.historyId };
   }
 
+  async listRecent(_days: number) {
+    return [...this.messages.keys()].reverse();
+  }
+
   async watch(topic: string) {
     if (this.watchError) throw this.watchError;
     this.watched.push(topic);
