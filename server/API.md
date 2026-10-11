@@ -67,3 +67,13 @@ Errors: `400` `status_required` or `company_required`, `404` `application_not_fo
 | Route | Description |
 |---|---|
 | `POST /api/events/:id/revert` | Restores the status the event replaced. Returns `{ applicationId, status }`. Only the newest change on an application can be undone. `409` `already_reverted`, `not_a_status_change`, `nothing_to_restore` or `not_latest_change` |
+
+## Deploy
+
+One Render web service (`render.yaml`) on the free plan, with the database on Supabase.
+
+- Build: `npm ci --include=dev && npm run build`. Start: `npm start`, which applies migrations and then runs the server.
+- In production Fastify also serves the built dashboard from `web/dist`; any page address that is not under `/api`, `/auth`, `/webhooks` or `/assets` gets `index.html`.
+- Set `PUBLIC_URL` to the service's URL and leave `WEB_URL` unset. `DATABASE_URL` must be Supabase's session pooler string (Render has no IPv6).
+- The free service sleeps after 15 minutes without traffic. A Gmail notification wakes it, and `.github/workflows/keepalive.yml` calls `/api/health` every 6 hours (repo variable `PUBLIC_URL`). Each wake restarts the server, which renews every Gmail watch and syncs every inbox.
+- Requests are logged by path only, because the webhook URL carries its token in the query string.

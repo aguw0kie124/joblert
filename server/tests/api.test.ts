@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { beforeEach, describe, expect, test, vi } from "vitest";
@@ -739,5 +742,42 @@ describe("deleting an account", () => {
 
     expect((await call(sam, "DELETE", "/api/me")).statusCode).toBe(204);
     expect((await db.select().from(schema.users)).map((u) => u.id)).toEqual([alex.id]);
+  });
+});
+
+describe("serving the dashboard", () => {
+  let site: FastifyInstance;
+
+  beforeEach(async () => {
+    const webDir = mkdtempSync(path.join(tmpdir(), "joblert-web-"));
+    writeFileSync(path.join(webDir, "index.html"), "<title>joblert</title>");
+    mkdirSync(path.join(webDir, "assets"));
+    writeFileSync(path.join(webDir, "assets", "app.js"), "console.log(1)");
+    site = await testApp(await freshDb(), fakeOAuth(), { webDir });
+  });
+
+  const get = (url: string) => site.inject({ method: "GET", url });
+
+  test("the page, its files, and any address the dashboard routes itself", async () => {
+    for (const url of ["/", "/review", "/applications/123?tab=timeline"]) {
+      const response = await get(url);
+      expect(response.statusCode).toBe(200);
+      expect(response.body).toContain("joblert");
+    }
+    expect((await get("/assets/app.js")).body).toBe("console.log(1)");
+  });
+
+  test("unknown API paths and missing files are still not found", async () => {
+    for (const url of ["/api/nope", "/auth/nope", "/webhooks/nope", "/assets/gone.js"]) {
+      const response = await get(url);
+      expect(response.statusCode).toBe(404);
+      expect(response.json()).toEqual({ error: "not_found" });
+    }
+    expect((await site.inject({ method: "POST", url: "/review" })).statusCode).toBe(404);
+  });
+
+  test("the API still answers alongside it", async () => {
+    expect((await get("/api/health")).json()).toEqual({ ok: true, db: "up" });
+    expect((await get("/api/me")).statusCode).toBe(401);
   });
 });

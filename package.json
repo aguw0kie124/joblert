@@ -8,6 +8,7 @@
     "dev:server": "npm run dev -w server",
     "dev:web": "npm run dev -w web",
     "build": "npm run build -w server && npm run build -w web",
+    "start": "npm run migrate -w server && npm run start -w server",
     "typecheck": "npm run typecheck -w server && npm run typecheck -w web",
     "test": "npm run test -w server",
     "db:generate": "npm run db:generate -w server",

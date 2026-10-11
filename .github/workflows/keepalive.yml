@@ -1,0 +1,17 @@
+# The free host sleeps when idle, which also stops the hourly refresh. Waking it restarts the server,
+# and the server renews every Gmail watch (they last 7 days) and syncs every inbox on start.
+name: Wake the app
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+jobs:
+  wake:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call the health check
+        env:
+          PUBLIC_URL: ${{ vars.PUBLIC_URL }}
+        run: curl --fail --silent --show-error --retry 5 --retry-delay 20 --retry-all-errors --max-time 90 "$PUBLIC_URL/api/health"
