@@ -10,6 +10,7 @@ const emailRow = (userId: string, gmailMessageId: string) => ({
   sender: "no-reply@greenhouse.io",
   subject: "Thanks for applying to Acme",
   receivedAt: new Date(),
+  processedState: "processed" as const,
 });
 
 test("migrations create every table with row-level security on", async () => {

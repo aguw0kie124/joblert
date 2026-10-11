@@ -64,7 +64,7 @@ export const emails = pgTable(
     subject: text("subject").notNull(),
     receivedAt: timestamptz("received_at").notNull(),
     extracted: jsonb("extracted"),
-    processedState: text("processed_state", { enum: PROCESSED_STATES }).notNull().default("pending"),
+    processedState: text("processed_state", { enum: PROCESSED_STATES }).notNull(),
     applicationId: uuid("application_id").references(() => applications.id, { onDelete: "set null" }),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
   },

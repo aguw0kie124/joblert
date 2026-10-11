@@ -1,6 +1,6 @@
-import { and, asc, eq, inArray, isNotNull } from "drizzle-orm";
+import { and, eq, inArray, isNotNull } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
-import { applications, emails, events, oauthTokens, reviewItems, syncState, users } from "../db/schema.ts";
+import { applications, emails, events, reviewItems, syncState } from "../db/schema.ts";
 import { GmailError, hasSkippedLabel, type GmailClient } from "../gmail/client.ts";
 import type { GmailConnector } from "../gmail/connect.ts";
 import { filterEmail, isAtsDomain } from "../gmail/filters.ts";
@@ -12,7 +12,6 @@ import { matchEmail, type MatchCandidate } from "./match.ts";
 import { decideTransition } from "./stateMachine.ts";
 import { SNIPPET_CHARS, type Triager } from "./triage.ts";
 
-const DAY_MS = 24 * 60 * 60 * 1000;
 // How many messages to download at once. The Gmail client paces the requests themselves.
 const FETCH_CONCURRENCY = 5;
 // Messages filtered together, so the ones no rule settles share one triage request.
@@ -29,26 +28,18 @@ export interface PollStats {
   recorded: number;
   review: number;
   ignored: number;
-  /** Stored for a later run because the classifier was unavailable. */
-  deferred: number;
+  /** Messages that could not be parsed. */
   failed: number;
 }
-
-export type PollResult =
-  | { userId: string; status: "ok"; stats: PollStats }
-  /** Google no longer accepts the stored token; the user has to sign in again. */
-  | { userId: string; status: "disconnected" }
-  | { userId: string; status: "failed"; error: string };
 
 export interface IngestDeps {
   db: Db;
   classifier: Classifier;
-  /** Decides on mail the filter is unsure about. Null drops that mail instead. */
-  triager: Triager | null;
+  /** Decides on mail the filter is unsure about. */
+  triager: Triager;
   connect: GmailConnector;
   /** Classifications below this confidence go to the review queue. */
   threshold: number;
-  backfillDays: number;
   log?: (message: string, data?: Record<string, unknown>) => void;
   now?: () => Date;
 }
@@ -63,8 +54,6 @@ export type Outcome =
   | { type: "change"; applicationId: string; from: Status; to: Status }
   | { type: "record"; applicationId: string }
   | { type: "review"; reason: ReviewReason; candidateIds: string[] };
-
-type Disposition = Outcome | { type: "defer" } | { type: "fail" };
 
 /** What one classified email does to the tracker. Pure: the caller supplies the user's applications. */
 export function decideOutcome(
@@ -118,24 +107,20 @@ export function decideOutcome(
   return { type: "review", reason: "no_match", candidateIds: [] };
 }
 
-const PROCESSED_STATE: Record<Disposition["type"], ProcessedState> = {
+const PROCESSED_STATE: Record<Outcome["type"], ProcessedState> = {
   ignore: "ignored",
   create: "processed",
   change: "processed",
   record: "processed",
   review: "needs_review",
-  defer: "pending",
-  fail: "failed",
 };
 
-const STAT: Record<Disposition["type"], keyof PollStats> = {
+const STAT: Record<Outcome["type"], keyof PollStats> = {
   ignore: "ignored",
   create: "created",
   change: "updated",
   record: "recorded",
   review: "review",
-  defer: "deferred",
-  fail: "failed",
 };
 
 const emptyStats = (): PollStats => ({
@@ -146,7 +131,6 @@ const emptyStats = (): PollStats => ({
   recorded: 0,
   review: 0,
   ignored: 0,
-  deferred: 0,
   failed: 0,
 });
 
@@ -156,25 +140,9 @@ function chunks<T>(items: readonly T[], size: number): T[][] {
   return out;
 }
 
-// Sent mail and chats are also dropped by label after fetching; excluding them here just saves requests.
-const searchSince = (since: Date) => `after:${Math.floor(since.getTime() / 1000)} -in:sent -in:chats -in:drafts`;
-
-/** A message on its way through the filter. `storedEmailId` is set when retrying an email that already has a row. */
-interface Incoming {
-  message: GmailMessage;
-  storedEmailId?: string;
-}
-
-interface Candidate {
-  email: ParsedEmail;
-  storedEmailId?: string;
-}
-
 class UserPoll {
   readonly stats = emptyStats();
   private known: KnownApplication[] = [];
-  // Set on the first rate limit or outage, so the rest of the run stops calling the model.
-  private classifierDown = false;
 
   constructor(
     private readonly deps: IngestDeps,
@@ -188,17 +156,17 @@ class UserPoll {
 
   async run(): Promise<PollStats> {
     this.known = await this.loadApplications();
-    await this.retryDeferred();
 
     const { messageIds, cursor } = await this.listNewMessages();
     for (const window of chunks(await this.withoutStored(messageIds), WINDOW)) {
       const fetched = await this.fetch(window);
       const messages = fetched.filter((m): m is GmailMessage => m !== null && !hasSkippedLabel(m.labelIds));
       this.stats.fetched += messages.length;
-      await this.processWindow(messages.map((message) => ({ message })));
+      await this.processWindow(messages);
     }
 
-    // Saved only once every message is stored; a run that dies earlier starts from the same place.
+    // Saved only once every message is stored. A run that stops earlier, on a rate limit or an outage,
+    // throws before this, so the next run starts from the same place; what it already stored is skipped.
     const lastRunAt = this.now();
     await this.db
       .insert(syncState)
@@ -250,10 +218,9 @@ class UserPoll {
     return rows.map((row) => ({ ...row, threadIds: threads.get(row.id) ?? [] }));
   }
 
-  /** Ids to look at this run, oldest first, and the cursor that will cover everything after them. */
+  /** Ids added since the last run, oldest first, and the cursor that will cover everything after them. */
   private async listNewMessages(): Promise<{ messageIds: string[]; cursor: string }> {
     const [state] = await this.db.select().from(syncState).where(eq(syncState.userId, this.userId));
-    let since = new Date(this.now().getTime() - this.deps.backfillDays * DAY_MS);
 
     if (state?.historyId) {
       try {
@@ -261,16 +228,13 @@ class UserPoll {
         return { messageIds, cursor: historyId };
       } catch (error) {
         if (!(error instanceof GmailError && error.code === "history_expired")) throw error;
-        this.deps.log?.("Gmail history cursor expired; searching by date instead", { userId: this.userId });
-        // Overlap by a day; messages already stored are skipped anyway.
-        if (state.lastRunAt) since = new Date(Math.max(since.getTime(), state.lastRunAt.getTime() - DAY_MS));
+        // Happens after about a week without a sync. What arrived in between is not recovered.
+        this.deps.log?.("Gmail history cursor expired; starting again from now", { userId: this.userId });
       }
     }
 
-    // Read the cursor before searching, so mail that arrives during the search is picked up next run.
-    const cursor = await this.gmail.getHistoryId();
-    const newestFirst = await this.gmail.listMessageIds(searchSince(since));
-    return { messageIds: newestFirst.reverse(), cursor };
+    // A newly connected inbox starts from now: nothing older is read.
+    return { messageIds: [], cursor: await this.gmail.getHistoryId() };
   }
 
   private async withoutStored(messageIds: readonly string[]): Promise<string[]> {
@@ -285,49 +249,18 @@ class UserPoll {
     return messageIds.filter((id) => !stored.has(id));
   }
 
-  /**
-   * Emails a previous run could not triage or classify. Bodies are never stored, so each is fetched again,
-   * and goes back through the filter: a held email that turns out not to be job mail is deleted.
-   */
-  private async retryDeferred() {
-    const deferred = await this.db
-      .select({ id: emails.id, gmailMessageId: emails.gmailMessageId })
-      .from(emails)
-      .where(and(eq(emails.userId, this.userId), eq(emails.processedState, "pending")))
-      .orderBy(asc(emails.receivedAt));
-
-    for (const rows of chunks(deferred, WINDOW)) {
-      if (this.classifierDown) return;
-      const fetched = await this.fetch(rows.map((row) => row.gmailMessageId));
-      const incoming: Incoming[] = [];
-      for (const [index, row] of rows.entries()) {
-        const message = fetched[index];
-        if (message) {
-          incoming.push({ message, storedEmailId: row.id });
-        } else {
-          await this.db.update(emails).set({ processedState: "ignored" }).where(eq(emails.id, row.id));
-          this.stats.ignored++;
-        }
-      }
-      await this.processWindow(incoming);
-    }
-  }
-
   /** Filters a window of messages, asks the triage about the ones no rule settles, and ingests what is left. */
-  private async processWindow(incoming: readonly Incoming[]) {
-    const candidates: Candidate[] = [];
-    const unsure: Candidate[] = [];
+  private async processWindow(messages: readonly GmailMessage[]) {
+    const candidates: ParsedEmail[] = [];
+    const unsure: ParsedEmail[] = [];
 
-    for (const { message, storedEmailId } of incoming) {
+    for (const message of messages) {
       let email: ParsedEmail;
       try {
         email = parseMessage(message);
       } catch (error) {
         this.deps.log?.("Skipped a message that could not be parsed", { userId: this.userId, messageId: message.id });
         this.stats.failed++;
-        if (storedEmailId) {
-          await this.db.update(emails).set({ processedState: "failed" }).where(eq(emails.id, storedEmailId));
-        }
         continue;
       }
 
@@ -337,31 +270,22 @@ class UserPoll {
         body: email.text,
         inKnownThread: this.known.some((a) => a.threadIds.includes(email.threadId)),
       });
-      if (filter.verdict === "relevant") candidates.push({ email, storedEmailId });
-      else if (filter.verdict === "unsure") unsure.push({ email, storedEmailId });
-      else await this.discard(storedEmailId);
+      if (filter.verdict === "relevant") candidates.push(email);
+      else if (filter.verdict === "unsure") unsure.push(email);
     }
 
     candidates.push(...(await this.triage(unsure)));
     // Oldest first, so a confirmation creates the application before its rejection arrives.
-    candidates.sort((a, b) => a.email.receivedAt.getTime() - b.email.receivedAt.getTime());
-    for (const { email, storedEmailId } of candidates) await this.ingest(email, storedEmailId);
+    candidates.sort((a, b) => a.receivedAt.getTime() - b.receivedAt.getTime());
+    for (const email of candidates) await this.ingest(email);
   }
 
-  /** The emails worth classifying among those the filter could not settle. */
-  private async triage(unsure: readonly Candidate[]): Promise<readonly Candidate[]> {
+  /** The emails worth classifying among those the filter could not settle. The rest are never stored. */
+  private async triage(unsure: readonly ParsedEmail[]): Promise<ParsedEmail[]> {
     if (unsure.length === 0) return [];
-    if (!this.deps.triager) {
-      for (const { storedEmailId } of unsure) await this.discard(storedEmailId);
-      return [];
-    }
-    // Kept as they are: with the model down, each is stored as pending and triaged on a later run.
-    if (this.classifierDown) return unsure;
-
-    let verdicts: boolean[];
     try {
-      verdicts = await this.deps.triager.triage(
-        unsure.map(({ email }) => ({
+      const verdicts = await this.deps.triager.triage(
+        unsure.map((email) => ({
           senderName: email.senderName,
           senderEmail: email.senderEmail,
           subject: email.subject,
@@ -369,98 +293,59 @@ class UserPoll {
         })),
         this.knownCompanies(),
       );
+      return unsure.filter((_, index) => verdicts[index] ?? true);
     } catch (error) {
-      // A rejected API key fails every email for every user, so it stops the whole poll.
-      if (!(error instanceof ClassifierError) || error.code === "auth") throw error;
-      if (error.code === "unavailable") {
-        this.classifierDown = true;
-        this.deps.log?.("Triage unavailable; deferring the rest of this run", { userId: this.userId });
-      }
-      // An unusable answer must not lose mail either: the classifier reads them all.
-      return unsure;
+      // An unusable answer must not lose mail: the classifier reads them all. Anything else ends the run.
+      if (error instanceof ClassifierError && error.code === "invalid_output") return [...unsure];
+      throw error;
     }
-
-    const kept: Candidate[] = [];
-    for (const [index, candidate] of unsure.entries()) {
-      if (verdicts[index] ?? true) kept.push(candidate);
-      else await this.discard(candidate.storedEmailId);
-    }
-    return kept;
   }
 
-  /** Mail that isn't job related is never kept: a new message is simply not stored, a held one loses its row. */
-  private async discard(storedEmailId?: string) {
-    if (!storedEmailId) return;
-    await this.db.delete(emails).where(and(eq(emails.id, storedEmailId), eq(emails.userId, this.userId)));
-    this.stats.ignored++;
-  }
-
-  private async ingest(email: ParsedEmail, storedEmailId?: string) {
-    const { classification, disposition } = await this.classify(email);
-    // Nothing to write when a retried email still can't be classified.
-    const stored =
-      storedEmailId && disposition.type === "defer"
-        ? true
-        : await this.store(email, classification, disposition, storedEmailId);
+  private async ingest(email: ParsedEmail) {
+    const { classification, outcome } = await this.classify(email);
     // False when another run stored this message first.
-    if (!stored) return;
+    if (!(await this.store(email, classification, outcome))) return;
 
-    if (!storedEmailId) this.stats.relevant++;
-    this.stats[STAT[disposition.type]]++;
-    if (disposition.type === "create" || disposition.type === "change" || disposition.type === "record") {
+    this.stats.relevant++;
+    this.stats[STAT[outcome.type]]++;
+    if (outcome.type === "create" || outcome.type === "change" || outcome.type === "record") {
       this.known = await this.loadApplications();
     }
   }
 
-  private async classify(
-    email: ParsedEmail,
-  ): Promise<{ classification: Classification | null; disposition: Disposition }> {
-    if (this.classifierDown) return { classification: null, disposition: { type: "defer" } };
+  private async classify(email: ParsedEmail): Promise<{ classification: Classification | null; outcome: Outcome }> {
     try {
       const classification = await this.deps.classifier.classify(email, { knownCompanies: this.knownCompanies() });
-      return {
-        classification,
-        disposition: decideOutcome(classification, email, this.known, this.deps.threshold),
-      };
+      return { classification, outcome: decideOutcome(classification, email, this.known, this.deps.threshold) };
     } catch (error) {
-      // A rejected API key fails every email for every user, so it stops the whole poll.
-      if (!(error instanceof ClassifierError) || error.code === "auth") throw error;
-      if (error.code === "unavailable") {
-        this.classifierDown = true;
-        this.deps.log?.("Classifier unavailable; deferring the rest of this run", { userId: this.userId });
-        return { classification: null, disposition: { type: "defer" } };
-      }
-      return { classification: null, disposition: { type: "fail" } };
+      // A rate limit, an outage or a rejected key ends the run: the cursor stays put, so the next run retries.
+      if (!(error instanceof ClassifierError) || error.code !== "invalid_output") throw error;
+      // The model answered, twice, with something unusable: a person reads this one.
+      return { classification: null, outcome: { type: "review", reason: "unreadable", candidateIds: [] } };
     }
   }
 
   /** Writes the email and everything it causes in one transaction. Returns false if the email was already stored. */
-  private async store(
-    email: ParsedEmail,
-    classification: Classification | null,
-    disposition: Disposition,
-    storedEmailId?: string,
-  ): Promise<boolean> {
+  private async store(email: ParsedEmail, classification: Classification | null, outcome: Outcome): Promise<boolean> {
     const userId = this.userId;
 
     return this.db.transaction(async (tx) => {
-      let emailId = storedEmailId;
-      if (!emailId) {
-        const [row] = await tx
-          .insert(emails)
-          .values({
-            userId,
-            gmailMessageId: email.gmailMessageId,
-            threadId: email.threadId,
-            sender: email.senderName ? `${email.senderName} <${email.senderEmail}>` : email.senderEmail,
-            subject: email.subject,
-            receivedAt: email.receivedAt,
-          })
-          .onConflictDoNothing()
-          .returning({ id: emails.id });
-        if (!row) return false;
-        emailId = row.id;
-      }
+      const [row] = await tx
+        .insert(emails)
+        .values({
+          userId,
+          gmailMessageId: email.gmailMessageId,
+          threadId: email.threadId,
+          sender: email.senderName ? `${email.senderName} <${email.senderEmail}>` : email.senderEmail,
+          subject: email.subject,
+          receivedAt: email.receivedAt,
+          extracted: classification,
+          processedState: PROCESSED_STATE[outcome.type],
+        })
+        .onConflictDoNothing()
+        .returning({ id: emails.id });
+      if (!row) return false;
+      const emailId = row.id;
 
       let applicationId: string | null = null;
       const event = (toApplication: string, fromStatus: Status | null, toStatus: Status | null) => ({
@@ -479,86 +364,56 @@ class UserPoll {
         occurredAt: email.receivedAt,
       });
 
-      switch (disposition.type) {
+      switch (outcome.type) {
         case "create": {
           const domain = emailDomain(email.senderEmail);
           const [created] = await tx
             .insert(applications)
             .values({
               userId,
-              company: disposition.company,
-              role: disposition.role,
+              company: outcome.company,
+              role: outcome.role,
               ats: isAtsDomain(domain) ? domainLabel(domain) : null,
               appliedAt: email.receivedAt,
-              status: disposition.status,
+              status: outcome.status,
               statusUpdatedAt: email.receivedAt,
               source: "email",
             })
             .returning({ id: applications.id });
           applicationId = created!.id;
-          await tx.insert(events).values(event(applicationId, null, disposition.status));
+          await tx.insert(events).values(event(applicationId, null, outcome.status));
           break;
         }
         case "change":
-          applicationId = disposition.applicationId;
+          applicationId = outcome.applicationId;
           await tx
             .update(applications)
-            .set({ status: disposition.to, statusUpdatedAt: email.receivedAt, updatedAt: this.now() })
+            .set({ status: outcome.to, statusUpdatedAt: email.receivedAt, updatedAt: this.now() })
             .where(and(eq(applications.id, applicationId), eq(applications.userId, userId)));
-          await tx.insert(events).values(event(applicationId, disposition.from, disposition.to));
+          await tx.insert(events).values(event(applicationId, outcome.from, outcome.to));
           break;
         case "record":
-          applicationId = disposition.applicationId;
+          applicationId = outcome.applicationId;
           await tx.insert(events).values(event(applicationId, null, null));
           break;
         case "review":
           await tx.insert(reviewItems).values({
             userId,
             emailId,
-            reason: disposition.reason,
-            candidateApplicationIds: disposition.candidateIds,
-            proposedStatus: classification!.kind === "other" ? null : classification!.kind,
+            reason: outcome.reason,
+            candidateApplicationIds: outcome.candidateIds,
+            proposedStatus: !classification || classification.kind === "other" ? null : classification.kind,
           });
           break;
       }
 
-      await tx
-        .update(emails)
-        .set({ processedState: PROCESSED_STATE[disposition.type], applicationId, extracted: classification })
-        .where(eq(emails.id, emailId));
+      if (applicationId) await tx.update(emails).set({ applicationId }).where(eq(emails.id, emailId));
       return true;
     });
   }
 }
 
-/** Syncs one inbox. Throws if Gmail or the database fails; the cursor is left where it was. */
+/** Syncs one inbox. Throws if Gmail, the model or the database fails; the cursor is left where it was. */
 export function pollUser(deps: IngestDeps, userId: string, gmail: GmailClient): Promise<PollStats> {
   return new UserPoll(deps, userId, gmail).run();
-}
-
-/** Syncs every connected inbox. One user's failure does not stop the others. */
-export async function runPoll(deps: IngestDeps): Promise<PollResult[]> {
-  const connected = await deps.db
-    .select({ id: users.id })
-    .from(users)
-    .innerJoin(oauthTokens, eq(oauthTokens.userId, users.id));
-
-  const results: PollResult[] = [];
-  for (const { id: userId } of connected) {
-    try {
-      const gmail = await deps.connect(userId);
-      if (!gmail) {
-        deps.log?.("Gmail access was revoked or has expired", { userId });
-        results.push({ userId, status: "disconnected" });
-        continue;
-      }
-      results.push({ userId, status: "ok", stats: await pollUser(deps, userId, gmail) });
-    } catch (error) {
-      if (error instanceof ClassifierError && error.code === "auth") throw error;
-      const message = error instanceof Error ? error.message : String(error);
-      deps.log?.("Poll failed", { userId, error: message });
-      results.push({ userId, status: "failed", error: message });
-    }
-  }
-  return results;
 }

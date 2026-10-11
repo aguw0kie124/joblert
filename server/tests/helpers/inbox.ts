@@ -6,12 +6,11 @@ import type { TriageItem, Triager } from "../../src/pipeline/triage.ts";
 import type { EmailKind } from "../../src/status.ts";
 import { gmailMessage, textPart } from "./gmail.ts";
 
-/** An inbox held in memory. `history` is what the next incremental sync returns. */
+/** An inbox held in memory. `history` is what the next sync is told is new; by default, every message. */
 export class FakeGmail implements GmailClient {
   readonly messages = new Map<string, GmailMessage>();
   historyId = "100";
-  history: string[] | "expired" = [];
-  searches: string[] = [];
+  history: string[] | "expired" | "all" = "all";
   failOn: string | null = null;
 
   add(...messages: GmailMessage[]) {
@@ -25,14 +24,10 @@ export class FakeGmail implements GmailClient {
 
   async listAddedSince(_historyId: string) {
     if (this.history === "expired") throw new GmailError("history_expired", "expired");
-    return { messageIds: this.history, historyId: this.historyId };
-  }
-
-  async listMessageIds(query: string) {
-    this.searches.push(query);
-    return [...this.messages.values()]
-      .sort((a, b) => Number(b.internalDate) - Number(a.internalDate))
+    const oldestFirst = [...this.messages.values()]
+      .sort((a, b) => Number(a.internalDate) - Number(b.internalDate))
       .map((message) => message.id);
+    return { messageIds: this.history === "all" ? oldestFirst : this.history, historyId: this.historyId };
   }
 
   async getMessage(id: string) {
@@ -70,7 +65,6 @@ export const result = (kind: EmailKind, overrides: Partial<Classification> = {})
   summary: `Summary for ${kind}`,
   deadline: null,
   interviewAt: null,
-  source: "llm",
   ...overrides,
 });
 

@@ -6,7 +6,7 @@ const base = { DATABASE_URL: "postgresql://u:p@localhost:5432/db" };
 test("blank values count as unset and defaults apply", () => {
   const config = loadConfig({ ...base, GROQ_API_KEY: "", PORT: "" });
   expect(config.GROQ_API_KEY).toBeUndefined();
-  expect(config).toMatchObject({ PORT: 3000, AUTO_APPLY_CONFIDENCE: 0.85, BACKFILL_DAYS: 30 });
+  expect(config).toMatchObject({ PORT: 3000, AUTO_APPLY_CONFIDENCE: 0.85 });
 });
 
 test("requireConfig names every missing variable at once", () => {

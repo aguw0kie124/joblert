@@ -69,7 +69,7 @@ export function createGroqClassifier(options: GroqClassifierOptions): Classifier
 
       for (let tries = 1; ; tries++) {
         try {
-          return finalizeClassification(await groq(request), email, "llm", knownCompanies);
+          return finalizeClassification(await groq(request), email, knownCompanies);
         } catch (error) {
           const retryable = error instanceof ClassifierError && error.code === "invalid_output";
           if (!retryable || tries >= MAX_INVALID_ATTEMPTS) throw error;

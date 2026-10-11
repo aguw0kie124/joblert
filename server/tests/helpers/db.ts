@@ -15,6 +15,11 @@ export async function freshDb() {
 
 export type TestDb = Awaited<ReturnType<typeof freshDb>>;
 
+/** Gives the user a Gmail cursor, as if their inbox had been synced before. A user without one reads no mail. */
+export async function seedCursor(db: TestDb, userId: string) {
+  await db.insert(schema.syncState).values({ userId, historyId: "1", lastRunAt: new Date("2026-10-01T00:00:00Z") });
+}
+
 export async function createUser(db: TestDb, name: string) {
   const [user] = await db
     .insert(schema.users)

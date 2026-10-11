@@ -18,7 +18,7 @@ Statuses: `applied`, `oa`, `interview`, `offer`, `rejected`.
 | `POST /auth/logout` | Ends the session. `204` |
 | `GET /api/me` | `{ id, email, gmailConnected, lastSyncAt }` |
 | `DELETE /api/me` | Deletes the account and all its data, and revokes Google access. `204` |
-| `POST /api/sync` | Starts a sync in the background. `202`. `409` `sync_in_progress` or `gmail_disconnected` |
+| `POST /api/sync` | Starts a sync in the background: reads mail that arrived since the last one. The first sync of a new account reads nothing and only marks where to start. `202`. `409` `sync_in_progress` or `gmail_disconnected` |
 
 ## Applications
 
@@ -43,7 +43,7 @@ Resolve actions:
 - `{ "action": "create", "company": "…", "role": "…", "status": "…" }`: log a new application. All fields default to what was read from the email.
 - `{ "action": "ignore" }`: dismiss it.
 
-Reasons: `low_confidence`, `ambiguous_match`, `no_match`, `status_conflict`.
+Reasons: `low_confidence`, `ambiguous_match`, `no_match`, `status_conflict`, `unreadable` (the classifier gave no usable answer, so nothing was read from the email and there is no proposed status).
 Errors: `400` `status_required` or `company_required`, `404` `application_not_found`, `409` `already_resolved`.
 
 ## Undo

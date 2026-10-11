@@ -1,11 +1,10 @@
 // Runs the fixture emails through real classifiers and prints how many each gets right,
 // then how well each model screens mail (triage) and recognises a tracked company under another name.
-// Usage: npm run eval:classifier -w server -- [model ...]   (defaults to GROQ_MODEL; "rules" is always included)
+// Usage: npm run eval:classifier -w server -- [model ...]   (defaults to GROQ_MODEL)
 import { loadConfig } from "../src/config.ts";
 import type { Classifier } from "../src/pipeline/classify.ts";
 import { companySimilarity } from "../src/pipeline/company.ts";
 import { createGroqClassifier } from "../src/pipeline/groqClassifier.ts";
-import { createRulesClassifier } from "../src/pipeline/rulesClassifier.ts";
 import { createGroqTriager, SNIPPET_CHARS } from "../src/pipeline/triage.ts";
 import { aliasFixtures, emailFixtures, triageFixtures } from "../tests/fixtures/emails.ts";
 
@@ -13,10 +12,10 @@ const config = loadConfig();
 if (!config.GROQ_API_KEY) throw new Error("GROQ_API_KEY is not set");
 
 const models = process.argv.slice(2).length ? process.argv.slice(2) : [config.GROQ_MODEL];
-const classifiers: [name: string, classifier: Classifier][] = [
-  ["rules", createRulesClassifier()],
-  ...models.map((model): [string, Classifier] => [model, createGroqClassifier({ apiKey: config.GROQ_API_KEY!, model })]),
-];
+const classifiers = models.map((model): [name: string, classifier: Classifier] => [
+  model,
+  createGroqClassifier({ apiKey: config.GROQ_API_KEY!, model }),
+]);
 
 const summary: Record<string, string | number>[] = [];
 

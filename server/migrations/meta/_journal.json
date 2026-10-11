@@ -15,6 +15,13 @@
       "when": 1791667048040,
       "tag": "0001_multi_tenant",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791745714827,
+      "tag": "0002_drop_held_emails",
+      "breakpoints": true
     }
   ]
 }

@@ -5,8 +5,8 @@ import { GoogleAuthError } from "../src/auth/google.ts";
 import * as schema from "../src/db/schema.ts";
 import type { ReviewReason, Status } from "../src/status.ts";
 import { completeSignIn, fakeOAuth, googleSignIn, testApp, type FakeOAuth } from "./helpers/app.ts";
-import { freshDb, type TestDb } from "./helpers/db.ts";
-import { FakeGmail, fakeClassifier, mail, result } from "./helpers/inbox.ts";
+import { freshDb, seedCursor, type TestDb } from "./helpers/db.ts";
+import { FakeGmail, fakeClassifier, fakeTriager, mail, result } from "./helpers/inbox.ts";
 
 const MISSING = "00000000-0000-4000-8000-000000000000";
 const day = (n: number) => new Date(Date.UTC(2026, 9, n, 9));
@@ -554,9 +554,11 @@ describe("syncing from the dashboard", () => {
   async function appWithInbox(gmail: FakeGmail | null) {
     const { classifier } = fakeClassifier({ [CONFIRMATION]: result("applied") });
     app = await testApp(db, oauth, {
-      ingest: { classifier, triager: null, connect: async () => gmail, threshold: 0.85, backfillDays: 30 },
+      ingest: { classifier, triager: fakeTriager([]).triager, connect: async () => gmail, threshold: 0.85 },
     });
-    return signIn("sam");
+    const user = await signIn("sam");
+    await seedCursor(db, user.id);
+    return user;
   }
 
   test("starts in the background and syncs only the signed-in user", async () => {
@@ -565,20 +567,18 @@ describe("syncing from the dashboard", () => {
     const response = await call(sam, "POST", "/api/sync");
 
     expect(response.statusCode).toBe(202);
-    await vi.waitFor(async () => expect(await db.select().from(schema.syncState)).toHaveLength(1));
+    await vi.waitFor(async () => expect((await db.select().from(schema.syncState))[0]!.historyId).toBe("100"));
     expect(await db.select().from(schema.applications)).toMatchObject([{ userId: sam.id, company: "Stripe" }]);
-    const profile = (await call(sam, "GET", "/api/me")).json();
-    expect(profile.lastSyncAt).not.toBeNull();
   });
 
   test("a second request while one is running is refused, and allowed again afterwards", async () => {
     const gmail = new FakeGmail().add(mail("m1", CONFIRMATION, day(1)));
     let release = () => {};
     const gate = new Promise<void>((resolve) => (release = resolve));
-    const listMessageIds = gmail.listMessageIds.bind(gmail);
-    gmail.listMessageIds = async (query) => {
+    const listAddedSince = gmail.listAddedSince.bind(gmail);
+    gmail.listAddedSince = async (historyId) => {
       await gate;
-      return listMessageIds(query);
+      return listAddedSince(historyId);
     };
     sam = await appWithInbox(gmail);
 
@@ -588,7 +588,6 @@ describe("syncing from the dashboard", () => {
     expect(second.json()).toEqual({ error: "sync_in_progress" });
 
     release();
-    await vi.waitFor(async () => expect(await db.select().from(schema.syncState)).toHaveLength(1));
     await vi.waitFor(async () => expect((await call(sam, "POST", "/api/sync")).statusCode).toBe(202));
   });
 

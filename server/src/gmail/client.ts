@@ -15,7 +15,7 @@ const MAX_INTERVAL_MS = 2000;
 const SPEED_UP = 0.98;
 
 /**
- * history_expired: the stored cursor is too old for Gmail to replay; fall back to a dated search.
+ * history_expired: the stored cursor is too old for Gmail to replay.
  * auth: the access token was rejected.
  * failed: anything else, after retries.
  */
@@ -36,8 +36,6 @@ export interface GmailClient {
   getHistoryId(): Promise<string>;
   /** Ids of messages added after `historyId`, oldest first, and the cursor to store for next time. */
   listAddedSince(historyId: string): Promise<{ messageIds: string[]; historyId: string }>;
-  /** Ids matching a Gmail search query, newest first. */
-  listMessageIds(query: string): Promise<string[]>;
   /** The full message, or null if it no longer exists. */
   getMessage(id: string): Promise<GmailMessage | null>;
 }
@@ -64,11 +62,6 @@ const historySchema = z.object({
     .optional(),
   nextPageToken: z.string().optional(),
   historyId: z.string(),
-});
-
-const listSchema = z.object({
-  messages: z.array(z.object({ id: z.string() })).optional(),
-  nextPageToken: z.string().optional(),
 });
 
 const messageSchema = z.looseObject({ id: z.string(), threadId: z.string() });
@@ -193,18 +186,6 @@ export function createGmailClient(options: GmailClientOptions): GmailClient {
         pageToken = page.nextPageToken;
       } while (pageToken);
       return { messageIds: [...ids], historyId: latest };
-    },
-
-    async listMessageIds(query) {
-      const ids: string[] = [];
-      let pageToken: string | undefined;
-      do {
-        const body = await get("/messages", { q: query, maxResults: String(PAGE_SIZE), pageToken });
-        const page = parse(listSchema, body, "message list");
-        for (const message of page.messages ?? []) ids.push(message.id);
-        pageToken = page.nextPageToken;
-      } while (pageToken);
-      return ids;
     },
 
     async getMessage(id) {

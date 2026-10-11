@@ -44,7 +44,7 @@ describe("groq classifier", () => {
     const { classifier, fetchMock } = setup(completion(output()));
 
     const result = await classifier.classify(email);
-    expect(result).toMatchObject({ kind: "oa", company: "Databricks", confidence: 0.96, source: "llm" });
+    expect(result).toMatchObject({ kind: "oa", company: "Databricks", confidence: 0.96 });
     expect(result.deadline?.toISOString()).toBe("2026-10-12T00:00:00.000Z");
 
     const [url, init] = fetchMock.mock.calls[0]!;

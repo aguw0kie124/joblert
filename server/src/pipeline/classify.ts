@@ -24,7 +24,6 @@ export interface Classification {
   summary: string;
   deadline: Date | null;
   interviewAt: Date | null;
-  source: "llm" | "rules";
 }
 
 export interface ClassifyContext {
@@ -37,7 +36,7 @@ export interface Classifier {
 }
 
 /**
- * invalid_output: the model answered but the answer can't be trusted; a different classifier may do better.
+ * invalid_output: the model answered but the answer can't be trusted; a person has to read the email.
  * unavailable: rate limited or down; retry the email later.
  * auth: the API key was rejected; retrying won't help.
  */
@@ -124,7 +123,6 @@ const blankToNull = (value: string | null) => value?.trim() || null;
 export function finalizeClassification(
   raw: unknown,
   email: ClassifierInput,
-  source: Classification["source"],
   knownCompanies: readonly string[] = [],
 ): Classification {
   const parsed = classificationSchema(knownCompanies).safeParse(raw);
@@ -152,22 +150,5 @@ export function finalizeClassification(
     summary: data.summary.trim(),
     deadline: plausibleDate(data.deadline, email.receivedAt),
     interviewAt: plausibleDate(data.interview_at, email.receivedAt),
-    source,
-  };
-}
-
-/** Uses `fallback` when `primary` answers with something unusable. Outages and auth errors still propagate. */
-export function withFallback(primary: Classifier, fallback: Classifier): Classifier {
-  return {
-    async classify(email, context) {
-      try {
-        return await primary.classify(email, context);
-      } catch (error) {
-        if (error instanceof ClassifierError && error.code === "invalid_output") {
-          return fallback.classify(email, context);
-        }
-        throw error;
-      }
-    },
   };
 }

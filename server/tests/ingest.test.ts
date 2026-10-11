@@ -1,9 +1,8 @@
-import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import * as schema from "../src/db/schema.ts";
 import { ClassifierError, type Classifier } from "../src/pipeline/classify.ts";
-import { pollUser, runPoll, type IngestDeps } from "../src/pipeline/ingest.ts";
-import { createUser, freshDb, type TestDb } from "./helpers/db.ts";
+import { pollUser, type IngestDeps } from "../src/pipeline/ingest.ts";
+import { createUser, freshDb, seedCursor, type TestDb } from "./helpers/db.ts";
 import { FakeGmail, fakeClassifier, fakeTriager, mail, result } from "./helpers/inbox.ts";
 
 const NOW = new Date("2026-10-10T12:00:00Z");
@@ -16,16 +15,16 @@ let gmail: FakeGmail;
 beforeEach(async () => {
   db = await freshDb();
   userId = (await createUser(db, "sam")).id;
+  await seedCursor(db, userId);
   gmail = new FakeGmail();
 });
 
 const deps = (classifier: Classifier, overrides: Partial<IngestDeps> = {}): IngestDeps => ({
   db,
   classifier,
-  triager: null,
+  triager: fakeTriager([]).triager,
   connect: async () => gmail,
   threshold: 0.85,
-  backfillDays: 30,
   now: () => NOW,
   ...overrides,
 });
@@ -41,7 +40,23 @@ const rows = {
 const CONFIRMATION = "Thank you for applying to Stripe";
 const REJECTION = "Update on your Stripe application";
 
-describe("first sync", () => {
+describe("a newly connected inbox", () => {
+  test("starts from now: mail already in it is not read", async () => {
+    await db.delete(schema.syncState);
+    gmail.add(mail("m1", CONFIRMATION, day(1)));
+    gmail.historyId = "4242";
+    const { classifier, classify } = fakeClassifier({});
+
+    const stats = await pollUser(deps(classifier), userId, gmail);
+
+    expect(stats).toMatchObject({ fetched: 0, relevant: 0 });
+    expect(classify).not.toHaveBeenCalled();
+    expect(await rows.emails()).toEqual([]);
+    expect(await rows.cursor()).toMatchObject({ userId, historyId: "4242", lastRunAt: NOW });
+  });
+});
+
+describe("a sync", () => {
   test("a confirmation creates an application with its first event", async () => {
     gmail.add(mail("m1", CONFIRMATION, day(1)));
     const { classifier } = fakeClassifier({ [CONFIRMATION]: result("applied") });
@@ -72,16 +87,13 @@ describe("first sync", () => {
     ]);
   });
 
-  test("searches back the configured number of days and saves the cursor", async () => {
+  test("saves the cursor Gmail hands back", async () => {
     gmail.historyId = "4242";
-    await pollUser(deps(fakeClassifier({}).classifier, { backfillDays: 14 }), userId, gmail);
-
-    const twoWeeksAgo = Math.floor((NOW.getTime() - 14 * 86_400_000) / 1000);
-    expect(gmail.searches).toEqual([`after:${twoWeeksAgo} -in:sent -in:chats -in:drafts`]);
+    await pollUser(deps(fakeClassifier({}).classifier), userId, gmail);
     expect(await rows.cursor()).toMatchObject({ userId, historyId: "4242", lastRunAt: NOW });
   });
 
-  test("without a triage, mail with no job signal is neither classified nor stored", async () => {
+  test("mail the triage turns away is neither classified nor stored", async () => {
     gmail.add(mail("m1", "Lunch on Friday?", day(1), { from: "Alex <alex@example.com>" }));
     const { classifier, classify } = fakeClassifier({});
 
@@ -150,7 +162,6 @@ describe("later syncs", () => {
     const stats = await pollUser(deps(classifier), userId, gmail);
 
     expect(stats).toMatchObject({ fetched: 1, updated: 1, created: 0 });
-    expect(gmail.searches).toHaveLength(1);
     expect(await rows.applications()).toMatchObject([{ status: "rejected" }]);
     expect((await rows.cursor())?.historyId).toBe("200");
   });
@@ -248,19 +259,21 @@ describe("later syncs", () => {
     expect((await rows.applications()).map((a) => a.status)).toEqual(["applied", "applied"]);
   });
 
-  test("falls back to a dated search when Gmail has forgotten the cursor", async () => {
-    const { classifier, answers } = await confirmed();
-    answers[REJECTION] = result("rejected");
+  test("starts again from now when Gmail has forgotten the cursor", async () => {
+    const { classifier, classify } = await confirmed();
     gmail.add(mail("m2", REJECTION, day(8)));
     gmail.history = "expired";
     gmail.historyId = "900";
+    const log = vi.fn();
 
-    await pollUser(deps(classifier), userId, gmail);
+    const stats = await pollUser(deps(classifier, { log }), userId, gmail);
 
-    const dayBeforeLastRun = Math.floor((NOW.getTime() - 86_400_000) / 1000);
-    expect(gmail.searches[1]).toContain(`after:${dayBeforeLastRun}`);
-    expect(await rows.applications()).toMatchObject([{ status: "rejected" }]);
+    // What arrived while the cursor was stale is not read.
+    expect(stats.fetched).toBe(0);
+    expect(classify).toHaveBeenCalledTimes(1);
+    expect(await rows.applications()).toMatchObject([{ status: "applied" }]);
     expect((await rows.cursor())?.historyId).toBe("900");
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("expired"), { userId });
   });
 });
 
@@ -304,7 +317,7 @@ describe("emails with no application to attach to", () => {
 
   test("an unsure confirmation does not create an application", async () => {
     gmail.add(mail("m1", CONFIRMATION, day(1)));
-    const { classifier } = fakeClassifier({ [CONFIRMATION]: result("applied", { confidence: 0.6, source: "rules" }) });
+    const { classifier } = fakeClassifier({ [CONFIRMATION]: result("applied", { confidence: 0.6 }) });
 
     await pollUser(deps(classifier), userId, gmail);
 
@@ -372,7 +385,7 @@ describe("mail no rule settles", () => {
     expect(triage.mock.calls[0]![1]).toEqual(["Stripe"]);
   });
 
-  test("triaged mail keeps its place in time among mail the rules passed", async () => {
+  test("triaged mail keeps its place in time among mail the filter passed", async () => {
     gmail.add(mail("m2", CHAT, day(8), from), mail("m1", CONFIRMATION, day(1)));
     const { classifier } = fakeClassifier({ [CONFIRMATION]: result("applied"), [CHAT]: result("rejected") });
 
@@ -382,28 +395,26 @@ describe("mail no rule settles", () => {
     expect(await rows.applications()).toMatchObject([{ status: "rejected" }]);
   });
 
-  test("is held when the triage is rate limited, then triaged on the next run", async () => {
+  test("a rate-limited triage ends the run with nothing stored, and the next run does the work", async () => {
     gmail.add(mail("m1", CHAT, day(2), from), mail("m2", CARD, day(3), from), mail("m3", CONFIRMATION, day(4)));
     const { classifier, classify } = fakeClassifier({ [CHAT]: result("interview"), [CONFIRMATION]: result("applied") });
     const down = fakeTriager(new ClassifierError("unavailable", "rate limited"));
 
-    const first = await pollUser(deps(classifier, { triager: down.triager }), userId, gmail);
+    await expect(pollUser(deps(classifier, { triager: down.triager }), userId, gmail)).rejects.toMatchObject({
+      code: "unavailable",
+    });
 
     // The classifier shares the model's quota, so it is not called either.
     expect(classify).not.toHaveBeenCalled();
-    expect(first).toMatchObject({ relevant: 3, deferred: 3 });
-    expect((await rows.emails()).map((e) => e.processedState)).toEqual(["pending", "pending", "pending"]);
+    expect(await rows.emails()).toEqual([]);
+    expect((await rows.cursor())?.historyId).toBe("1");
 
-    gmail.history = [];
     const second = await pollUser(deps(classifier, { triager: fakeTriager([CHAT]).triager }), userId, gmail);
 
     // The confirmation is for the application the earlier message already logged.
-    expect(second).toMatchObject({ created: 1, recorded: 1, ignored: 1, deferred: 0 });
-    // The held card statement turned out not to be job mail, so its row is gone.
-    expect((await rows.emails()).map((e) => [e.subject, e.processedState])).toEqual([
-      [CHAT, "processed"],
-      [CONFIRMATION, "processed"],
-    ]);
+    expect(second).toMatchObject({ fetched: 3, relevant: 2, created: 1, recorded: 1 });
+    expect((await rows.emails()).map((e) => e.subject)).toEqual([CHAT, CONFIRMATION]);
+    expect((await rows.cursor())?.historyId).toBe("100");
   });
 
   test("goes to the classifier when the triage answer can't be used", async () => {
@@ -417,12 +428,14 @@ describe("mail no rule settles", () => {
     expect(await rows.emails()).toMatchObject([{ processedState: "ignored" }]);
   });
 
-  test("a rejected API key at the triage stops the whole poll", async () => {
-    await db.insert(schema.oauthTokens).values({ userId, refreshTokenEncrypted: "ciphertext", scope: "gmail" });
+  test("a rejected API key at the triage ends the run", async () => {
     gmail.add(mail("m1", CHAT, day(2), from));
     const { triager } = fakeTriager(new ClassifierError("auth", "bad key"));
 
-    await expect(runPoll(deps(fakeClassifier({}).classifier, { triager }))).rejects.toMatchObject({ code: "auth" });
+    await expect(pollUser(deps(fakeClassifier({}).classifier, { triager }), userId, gmail)).rejects.toMatchObject({
+      code: "auth",
+    });
+    expect((await rows.cursor())?.historyId).toBe("1");
   });
 });
 
@@ -462,57 +475,33 @@ describe("company names", () => {
   });
 });
 
-describe("when the classifier is unavailable", () => {
+describe("when the classifier can't answer", () => {
   const down = new ClassifierError("unavailable", "rate limited");
 
-  test("emails are held for the next run and the cursor still moves on", async () => {
+  test("a rate limit ends the run without moving the cursor, and the next run finishes the work", async () => {
     gmail.add(mail("m1", CONFIRMATION, day(1)), mail("m2", REJECTION, day(8)));
     gmail.historyId = "500";
-    const { classifier, classify, answers } = fakeClassifier({ [CONFIRMATION]: down, [REJECTION]: down });
+    const { classifier, classify, answers } = fakeClassifier({ [CONFIRMATION]: result("applied"), [REJECTION]: down });
 
-    const first = await pollUser(deps(classifier), userId, gmail);
+    await expect(pollUser(deps(classifier), userId, gmail)).rejects.toMatchObject({ code: "unavailable" });
 
-    expect(first).toMatchObject({ relevant: 2, deferred: 2, created: 0 });
-    // One failure is enough; the second email is not sent to a classifier that is already down.
-    expect(classify).toHaveBeenCalledTimes(1);
-    expect((await rows.emails()).map((e) => e.processedState)).toEqual(["pending", "pending"]);
-    expect((await rows.cursor())?.historyId).toBe("500");
+    // What was classified before the limit is kept; the rest is not stored at all.
+    expect(await rows.applications()).toMatchObject([{ status: "applied" }]);
+    expect((await rows.emails()).map((e) => e.processedState)).toEqual(["processed"]);
+    expect((await rows.cursor())?.historyId).toBe("1");
 
-    answers[CONFIRMATION] = result("applied");
     answers[REJECTION] = result("rejected");
-    gmail.history = [];
     const second = await pollUser(deps(classifier), userId, gmail);
 
-    expect(second).toMatchObject({ relevant: 0, created: 1, updated: 1, deferred: 0 });
+    // The confirmation is already stored, so it is neither fetched nor classified again.
+    expect(second).toMatchObject({ fetched: 1, relevant: 1, created: 0, updated: 1 });
+    expect(classify).toHaveBeenCalledTimes(3);
     expect(await rows.applications()).toMatchObject([{ status: "rejected" }]);
-    expect((await rows.emails()).map((e) => e.processedState)).toEqual(["processed", "processed"]);
+    expect(await rows.events()).toHaveLength(2);
+    expect((await rows.cursor())?.historyId).toBe("500");
   });
 
-  test("a held email that is still unclassifiable stays held, without a duplicate row", async () => {
-    gmail.add(mail("m1", CONFIRMATION, day(1)));
-    const { classifier } = fakeClassifier({ [CONFIRMATION]: down });
-
-    await pollUser(deps(classifier), userId, gmail);
-    gmail.history = [];
-    const second = await pollUser(deps(classifier), userId, gmail);
-
-    expect(second).toMatchObject({ deferred: 1, relevant: 0 });
-    expect(await rows.emails()).toMatchObject([{ processedState: "pending" }]);
-  });
-
-  test("a held email since deleted from Gmail is dropped", async () => {
-    gmail.add(mail("m1", CONFIRMATION, day(1)));
-    const { classifier } = fakeClassifier({ [CONFIRMATION]: down });
-    await pollUser(deps(classifier), userId, gmail);
-
-    gmail.messages.clear();
-    gmail.history = [];
-    await pollUser(deps(classifier), userId, gmail);
-
-    expect(await rows.emails()).toMatchObject([{ processedState: "ignored" }]);
-  });
-
-  test("an answer that can't be used marks the email failed and the run carries on", async () => {
+  test("an answer that can't be used sends the email to review and the run carries on", async () => {
     gmail.add(mail("m1", CONFIRMATION, day(1)), mail("m2", "Thanks for applying to Ramp", day(2)));
     const { classifier } = fakeClassifier({
       [CONFIRMATION]: new ClassifierError("invalid_output", "bad json"),
@@ -521,75 +510,51 @@ describe("when the classifier is unavailable", () => {
 
     const stats = await pollUser(deps(classifier), userId, gmail);
 
-    expect(stats).toMatchObject({ failed: 1, created: 1 });
-    expect((await rows.emails()).map((e) => e.processedState)).toEqual(["failed", "processed"]);
+    expect(stats).toMatchObject({ review: 1, created: 1 });
+    expect((await rows.emails()).map((e) => e.processedState)).toEqual(["needs_review", "processed"]);
+    expect(await rows.reviews()).toMatchObject([
+      { reason: "unreadable", proposedStatus: null, candidateApplicationIds: [] },
+    ]);
   });
 });
 
-describe("runPoll", () => {
-  const connect = async (db: TestDb, id: string) => {
-    await db.insert(schema.oauthTokens).values({ userId: id, refreshTokenEncrypted: "ciphertext", scope: "gmail" });
-  };
-
-  test("syncs each connected user into their own data", async () => {
+describe("more than one user", () => {
+  test("each inbox is synced into its owner's data, even with the same message ids", async () => {
     const alex = (await createUser(db, "alex")).id;
-    await connect(db, userId);
-    await connect(db, alex);
-    const inboxes: Record<string, FakeGmail> = {
-      [userId]: new FakeGmail().add(mail("m1", CONFIRMATION, day(1)), mail("m2", REJECTION, day(8))),
-      // Same Gmail message id and company as the other inbox, but no rejection.
-      [alex]: new FakeGmail().add(mail("m1", CONFIRMATION, day(1))),
-    };
+    await seedCursor(db, alex);
+    gmail.add(mail("m1", CONFIRMATION, day(1)), mail("m2", REJECTION, day(8)));
+    // Same Gmail message id and company as the other inbox, but no rejection.
+    const theirs = new FakeGmail().add(mail("m1", CONFIRMATION, day(1)));
     const { classifier } = fakeClassifier({ [CONFIRMATION]: result("applied"), [REJECTION]: result("rejected") });
 
-    const results = await runPoll(deps(classifier, { connect: async (id) => inboxes[id]! }));
+    await pollUser(deps(classifier), userId, gmail);
+    await pollUser(deps(classifier), alex, theirs);
 
-    expect(results.map((r) => r.status)).toEqual(["ok", "ok"]);
     const applications = await rows.applications();
+    expect(applications).toHaveLength(2);
     expect(applications.find((a) => a.userId === userId)?.status).toBe("rejected");
     expect(applications.find((a) => a.userId === alex)?.status).toBe("applied");
-    expect(applications).toHaveLength(2);
+    expect((await rows.emails()).filter((e) => e.userId === alex).map((e) => e.gmailMessageId)).toEqual(["m1"]);
   });
+});
 
-  test("users who never connected Gmail are skipped", async () => {
-    const connector = vi.fn(async () => gmail);
-    expect(await runPoll(deps(fakeClassifier({}).classifier, { connect: connector }))).toEqual([]);
-    expect(connector).not.toHaveBeenCalled();
-  });
-
-  test("a user whose access was revoked is reported, not synced", async () => {
-    await connect(db, userId);
-    const results = await runPoll(deps(fakeClassifier({}).classifier, { connect: async () => null }));
-    expect(results).toEqual([{ userId, status: "disconnected" }]);
-  });
-
-  test("a Gmail failure leaves that user's cursor alone and the next user still syncs", async () => {
-    const alex = (await createUser(db, "alex")).id;
-    await connect(db, userId);
-    await connect(db, alex);
-    const broken = new FakeGmail().add(mail("m1", CONFIRMATION, day(1)));
-    broken.failOn = "m1";
-    const inboxes: Record<string, FakeGmail> = {
-      [userId]: broken,
-      [alex]: new FakeGmail().add(mail("m1", CONFIRMATION, day(1))),
-    };
+describe("when a run can't finish", () => {
+  test("a Gmail failure leaves the cursor alone", async () => {
+    gmail.add(mail("m1", CONFIRMATION, day(1)));
+    gmail.failOn = "m1";
     const { classifier } = fakeClassifier({ [CONFIRMATION]: result("applied") });
 
-    const results = await runPoll(deps(classifier, { connect: async (id) => inboxes[id]! }));
+    await expect(pollUser(deps(classifier), userId, gmail)).rejects.toMatchObject({ code: "failed" });
 
-    expect(results.find((r) => r.userId === userId)).toMatchObject({ status: "failed" });
-    expect(results.find((r) => r.userId === alex)).toMatchObject({ status: "ok" });
-    const cursors = await db.select().from(schema.syncState);
-    expect(cursors.map((c) => c.userId)).toEqual([alex]);
-    expect(await db.select().from(schema.applications).where(eq(schema.applications.userId, userId))).toEqual([]);
+    expect((await rows.cursor())?.historyId).toBe("1");
+    expect(await rows.applications()).toEqual([]);
   });
 
-  test("a rejected classifier API key stops the whole poll", async () => {
-    await connect(db, userId);
+  test("a rejected classifier API key leaves the cursor alone", async () => {
     gmail.add(mail("m1", CONFIRMATION, day(1)));
     const { classifier } = fakeClassifier({ [CONFIRMATION]: new ClassifierError("auth", "bad key") });
 
-    await expect(runPoll(deps(classifier))).rejects.toMatchObject({ code: "auth" });
-    expect(await rows.cursor()).toBeUndefined();
+    await expect(pollUser(deps(classifier), userId, gmail)).rejects.toMatchObject({ code: "auth" });
+    expect((await rows.cursor())?.historyId).toBe("1");
   });
 });

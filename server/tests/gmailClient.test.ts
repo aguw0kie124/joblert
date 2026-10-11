@@ -52,20 +52,6 @@ test("a cursor Gmail has forgotten is reported as history_expired", async () => 
   await expect(gmail.listAddedSince("1")).rejects.toMatchObject({ code: "history_expired" });
 });
 
-test("a search is paged", async () => {
-  const { gmail, url } = setup(
-    json({ messages: [{ id: "m3" }, { id: "m2" }], nextPageToken: "next" }),
-    json({ messages: [{ id: "m1" }] }),
-  );
-  await expect(gmail.listMessageIds("after:123")).resolves.toEqual(["m3", "m2", "m1"]);
-  expect(url(0).searchParams.get("q")).toBe("after:123");
-  expect(url(1).searchParams.get("pageToken")).toBe("next");
-});
-
-test("a search with no results returns nothing", async () => {
-  await expect(setup(json({ resultSizeEstimate: 0 })).gmail.listMessageIds("after:1")).resolves.toEqual([]);
-});
-
 test("a message is fetched in full, and a deleted one is null", async () => {
   const { gmail, url } = setup(json({ id: "m1", threadId: "t1", payload: { headers: [] } }), json({}, 404));
   await expect(gmail.getMessage("m1")).resolves.toMatchObject({ id: "m1", threadId: "t1", payload: { headers: [] } });

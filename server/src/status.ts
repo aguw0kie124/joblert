@@ -18,10 +18,11 @@ export type EmailKind = (typeof EMAIL_KINDS)[number];
 export const SOURCES = ["email", "manual"] as const;
 export type Source = (typeof SOURCES)[number];
 
-export const PROCESSED_STATES = ["pending", "processed", "ignored", "needs_review", "failed"] as const;
+export const PROCESSED_STATES = ["processed", "ignored", "needs_review"] as const;
 export type ProcessedState = (typeof PROCESSED_STATES)[number];
 
-export const REVIEW_REASONS = ["low_confidence", "ambiguous_match", "no_match", "status_conflict"] as const;
+// unreadable: the classifier gave no usable answer, so nothing was read from the email.
+export const REVIEW_REASONS = ["low_confidence", "ambiguous_match", "no_match", "status_conflict", "unreadable"] as const;
 export type ReviewReason = (typeof REVIEW_REASONS)[number];
 
 // accepted: applied to a suggested application. reassigned: applied to a different one.

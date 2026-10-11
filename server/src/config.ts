@@ -9,14 +9,12 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3000),
   // Emails classified below this confidence go to the review queue instead of auto-applying.
   AUTO_APPLY_CONFIDENCE: z.coerce.number().min(0).max(1).default(0.85),
-  // How far back the first sync of a newly connected inbox reads.
-  BACKFILL_DAYS: z.coerce.number().int().positive().default(30),
   // Where the API is reachable from a browser; the Google redirect URI is built from it.
   PUBLIC_URL: z.url().optional(),
   // Where to send the browser after sign-in when the dashboard is served from another origin (Vite in dev).
   WEB_URL: z.url().optional(),
 
-  // Optional until the step that uses them; each consumer asserts its own.
+  // Each entrypoint asserts the ones it cannot run without.
   GROQ_API_KEY: optional,
   GROQ_MODEL: z.string().min(1).default("openai/gpt-oss-120b"),
   GOOGLE_CLIENT_ID: optional,
