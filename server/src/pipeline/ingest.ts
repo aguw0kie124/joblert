@@ -12,8 +12,8 @@ import { matchEmail, type MatchCandidate } from "./match.ts";
 import { decideTransition } from "./stateMachine.ts";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-// Gmail allows about 50 message fetches a second per user; this stays well under it.
-const FETCH_CONCURRENCY = 20;
+// How many messages to download at once. The Gmail client paces the requests themselves.
+const FETCH_CONCURRENCY = 5;
 const ID_QUERY_CHUNK = 500;
 
 export interface PollStats {

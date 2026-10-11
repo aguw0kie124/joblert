@@ -1,4 +1,4 @@
-import { expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createGmailClient, hasSkippedLabel } from "../src/gmail/client.ts";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
@@ -11,7 +11,7 @@ function setup(...responses: (Response | Error)[]) {
     return next;
   });
   const sleep = vi.fn(async (_ms: number) => {});
-  const gmail = createGmailClient({ accessToken: "access-token", fetch: fetchMock, sleep });
+  const gmail = createGmailClient({ accessToken: "access-token", fetch: fetchMock, sleep, pace: false });
   const url = (call: number) => fetchMock.mock.calls[call]![0] as URL;
   return { gmail, fetchMock, sleep, url };
 }
@@ -74,16 +74,17 @@ test("a message is fetched in full, and a deleted one is null", async () => {
   await expect(gmail.getMessage("gone")).resolves.toBeNull();
 });
 
-test("rate limits, server errors and network failures are retried", async () => {
-  const { gmail, sleep } = setup(json({}, 429), json({}, 503), new Error("reset"), json({ historyId: "5" }));
+test("server errors and network failures are retried with growing waits", async () => {
+  const { gmail, sleep } = setup(json({}, 503), new Error("reset"), json({}, 500), json({ historyId: "5" }));
   await expect(gmail.getHistoryId()).resolves.toBe("5");
   expect(sleep.mock.calls.map(([ms]) => ms)).toEqual([1000, 2000, 4000]);
 });
 
 test("retries give up eventually", async () => {
-  const { gmail, fetchMock } = setup(json({}, 500), json({}, 500), json({}, 500), json({}, 500));
+  const { gmail, fetchMock, sleep } = setup(...Array.from({ length: 6 }, () => json({}, 500)));
   await expect(gmail.getHistoryId()).rejects.toMatchObject({ code: "failed" });
-  expect(fetchMock).toHaveBeenCalledTimes(4);
+  expect(fetchMock).toHaveBeenCalledTimes(6);
+  expect(sleep.mock.calls.map(([ms]) => ms)).toEqual([1000, 2000, 4000, 8000, 16000]);
 });
 
 test("a rejected token fails at once with an auth error", async () => {
@@ -103,10 +104,22 @@ test("a disabled Gmail API fails at once and says what to fix", async () => {
   expect(fetchMock).toHaveBeenCalledTimes(1);
 });
 
-test("a 403 that is really a rate limit is retried", async () => {
-  const { gmail, sleep } = setup(googleError(403, "userRateLimitExceeded"), json({ historyId: "5" }));
+test("rate limits are waited out, whether Gmail reports them as 429 or 403", async () => {
+  const { gmail, sleep } = setup(
+    json({}, 429),
+    googleError(403, "rateLimitExceeded"),
+    googleError(403, "userRateLimitExceeded"),
+    json({ historyId: "5" }),
+  );
   await expect(gmail.getHistoryId()).resolves.toBe("5");
-  expect(sleep).toHaveBeenCalledTimes(1);
+  expect(sleep.mock.calls.map(([ms]) => ms)).toEqual([2000, 4000, 8000]);
+});
+
+test("a rate limit outlasts far more retries than an outage, but not forever", async () => {
+  const { gmail, fetchMock, sleep } = setup(...Array.from({ length: 11 }, () => json({}, 429)));
+  await expect(gmail.getHistoryId()).rejects.toMatchObject({ code: "failed", message: /kept rate limiting/ });
+  expect(fetchMock).toHaveBeenCalledTimes(11);
+  expect(sleep.mock.calls.reduce((total, [ms]) => total + ms, 0)).toBeGreaterThan(4 * 60_000);
 });
 
 test("an unexpected response shape is an error, not a silent empty result", async () => {
@@ -117,4 +130,42 @@ test("sent mail, drafts, chats, spam and trash are skipped", () => {
   expect(hasSkippedLabel(["INBOX", "UNREAD"])).toBe(false);
   expect(hasSkippedLabel(["INBOX", "SENT"])).toBe(true);
   expect(hasSkippedLabel(undefined)).toBe(false);
+});
+
+describe("pacing", () => {
+  const paced = (...responses: Response[]) => {
+    const fetchMock = vi.fn(async () => responses.shift() ?? json({ id: "m", threadId: "t" }));
+    // Waiting moves the clock, as it would for real.
+    const sleep = vi.fn(async (ms: number) => void vi.advanceTimersByTime(ms));
+    return { gmail: createGmailClient({ accessToken: "t", fetch: fetchMock, sleep }), sleep, fetchMock };
+  };
+  const waits = (sleep: ReturnType<typeof paced>["sleep"]) => sleep.mock.calls.map(([ms]) => Math.round(ms));
+
+  beforeEach(() => void vi.useFakeTimers({ now: 1_000_000, toFake: ["Date"] }));
+  afterEach(() => void vi.useRealTimers());
+
+  test("requests made together are spaced out instead of sent at once", async () => {
+    const { gmail, sleep } = paced();
+    await Promise.all(["a", "b", "c", "d"].map((id) => gmail.getMessage(id)));
+    // Each wait is measured from when the one before it ended.
+    expect(waits(sleep)).toEqual([100, 100, 100]);
+  });
+
+  test("a rate limit doubles the gap for the requests that follow", async () => {
+    const { gmail, sleep } = paced(json({}, 429));
+    await gmail.getMessage("a");
+    await gmail.getMessage("b");
+    // 2000 is the wait after the rate limit; then the gap is 200 instead of 100.
+    expect(waits(sleep)).toEqual([2000, 200]);
+  });
+
+  test("the gap shrinks while requests succeed, down to a floor", async () => {
+    const { gmail, sleep } = paced();
+    for (let i = 0; i < 80; i++) await gmail.getMessage(`m${i}`);
+    const gaps = waits(sleep);
+    expect(gaps[0]).toBe(100);
+    expect(gaps.at(-1)).toBe(50);
+    expect(gaps.every((gap) => gap >= 50 && gap <= 100)).toBe(true);
+    expect(gaps[20]).toBeLessThan(80);
+  });
 });
