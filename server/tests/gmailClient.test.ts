@@ -42,6 +42,37 @@ test("history is paged, de-duplicated, and skips sent mail", async () => {
   expect(url(1).searchParams.get("pageToken")).toBe("page-2");
 });
 
+test("watching posts the topic and limits notifications to the inbox", async () => {
+  const { gmail, fetchMock, url } = setup(json({ historyId: "900", expiration: "1791561367454" }));
+
+  await gmail.watch("projects/joblert/topics/gmail");
+
+  expect(url(0).pathname).toBe("/gmail/v1/users/me/watch");
+  const init = fetchMock.mock.calls[0]![1]!;
+  expect(init.method).toBe("POST");
+  expect(new Headers(init.headers).get("authorization")).toBe("Bearer access-token");
+  expect(JSON.parse(init.body as string)).toEqual({
+    topicName: "projects/joblert/topics/gmail",
+    labelIds: ["INBOX"],
+    labelFilterBehavior: "include",
+  });
+});
+
+test("a refused watch is an error, with Gmail's reason", async () => {
+  const refused = json({ error: { errors: [{ reason: "forbidden" }] } }, 403);
+  await expect(setup(refused).gmail.watch("projects/joblert/topics/gmail")).rejects.toMatchObject({
+    code: "auth",
+    message: expect.stringContaining("forbidden"),
+  });
+});
+
+test("stopping a watch posts, and copes with the empty answer", async () => {
+  const { gmail, fetchMock, url } = setup(new Response(null, { status: 204 }));
+  await expect(gmail.stopWatch()).resolves.toBeUndefined();
+  expect(url(0).pathname).toBe("/gmail/v1/users/me/stop");
+  expect(fetchMock.mock.calls[0]![1]!.method).toBe("POST");
+});
+
 test("an empty history still moves the cursor forward", async () => {
   const { gmail } = setup(json({ historyId: "300" }));
   await expect(gmail.listAddedSince("100")).resolves.toEqual({ messageIds: [], historyId: "300" });

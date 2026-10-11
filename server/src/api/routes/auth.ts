@@ -6,12 +6,14 @@ import { hasGmailScope, type GoogleOAuth } from "../../auth/google.ts";
 import { encrypt } from "../../auth/secrets.ts";
 import type { Db } from "../../db/client.ts";
 import { oauthTokens, syncState, users } from "../../db/schema.ts";
+import type { SyncRunner } from "../../pipeline/syncRunner.ts";
 
 export interface AuthRouteOptions {
   db: Db;
   oauth: GoogleOAuth;
   tokenKey: Buffer;
   webUrl: string;
+  runner: SyncRunner;
 }
 
 const callbackQuery = z.object({
@@ -29,7 +31,7 @@ type SignInError = "denied" | "gmail_scope" | "failed";
 
 const sameState = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 
-export async function authRoutes(app: FastifyInstance, { db, oauth, tokenKey, webUrl }: AuthRouteOptions) {
+export async function authRoutes(app: FastifyInstance, { db, oauth, tokenKey, webUrl, runner }: AuthRouteOptions) {
   const failure = (error: SignInError) => `${webUrl}?auth_error=${error}`;
 
   /** The signed-in user, or undefined. A session for a deleted account counts as signed out. */
@@ -90,6 +92,8 @@ export async function authRoutes(app: FastifyInstance, { db, oauth, tokenKey, we
     });
 
     request.session.set("userId", userId);
+    // In the background: start Gmail's notifications and mark where this inbox's first sync begins.
+    void runner.refresh(userId);
     return reply.redirect(webUrl);
   });
 

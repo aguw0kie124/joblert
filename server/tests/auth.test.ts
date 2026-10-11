@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
-import { beforeEach, describe, expect, test } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import { GoogleAuthError } from "../src/auth/google.ts";
 import { decrypt, deriveKey } from "../src/auth/secrets.ts";
 import * as schema from "../src/db/schema.ts";
@@ -9,6 +9,7 @@ import {
   cookieFrom,
   fakeOAuth,
   googleSignIn as signIn,
+  PUBSUB,
   startSignIn,
   testApp,
   TOKEN_SECRET,
@@ -16,6 +17,7 @@ import {
   type FakeOAuth,
 } from "./helpers/app.ts";
 import { freshDb, type TestDb } from "./helpers/db.ts";
+import { FakeGmail, fakeClassifier, fakeTriager, mail } from "./helpers/inbox.ts";
 
 let db: TestDb;
 let app: FastifyInstance;
@@ -34,6 +36,25 @@ const completeSignIn = () => signInThrough(app);
 
 const me = (cookie?: string) =>
   app.inject({ method: "GET", url: "/api/me", headers: cookie ? { cookie } : {} });
+
+describe("connecting an inbox", () => {
+  test("starts Gmail's notifications and begins from now, without reading old mail", async () => {
+    const gmail = new FakeGmail().add(mail("m1", "Thank you for applying to Stripe", new Date("2026-10-01T09:00:00Z")));
+    gmail.historyId = "4242";
+    const { classifier, classify } = fakeClassifier({});
+    app = await testApp(db, oauth, {
+      pubsub: PUBSUB,
+      ingest: { classifier, triager: fakeTriager([]).triager, connect: async () => gmail, threshold: 0.85 },
+    });
+
+    await completeSignIn();
+
+    await vi.waitFor(async () => expect(await db.select().from(schema.syncState)).toMatchObject([{ historyId: "4242" }]));
+    expect(gmail.watched).toEqual([PUBSUB.topic]);
+    expect(classify).not.toHaveBeenCalled();
+    expect(await db.select().from(schema.emails)).toEqual([]);
+  });
+});
 
 describe("signing in", () => {
   test("starts by sending the browser to Google with a fresh state", async () => {

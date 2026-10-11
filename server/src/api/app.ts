@@ -5,14 +5,23 @@ import type { GoogleOAuth } from "../auth/google.ts";
 import { deriveKey } from "../auth/secrets.ts";
 import type { Db } from "../db/client.ts";
 import type { IngestDeps } from "../pipeline/ingest.ts";
+import { createSyncRunner, type SyncRunner } from "../pipeline/syncRunner.ts";
 import { protectedRoutes } from "./protected.ts";
 import { authRoutes } from "./routes/auth.ts";
+import { webhookRoutes } from "./routes/webhooks.ts";
 
 declare module "@fastify/secure-session" {
   interface SessionData {
     userId: string;
     /** Random value sent to Google and checked on return, so a sign-in can't be started by another site. */
     oauthState: string;
+  }
+}
+
+declare module "fastify" {
+  interface FastifyInstance {
+    /** Starts every sync. The entrypoint starts its timer once the server is listening. */
+    syncRunner: SyncRunner;
   }
 }
 
@@ -23,8 +32,10 @@ export interface AppOptions {
   oauth: GoogleOAuth;
   sessionSecret: string;
   tokenEncryptionKey: string;
-  /** How a sync started from the dashboard reads and classifies mail. */
-  ingest: Omit<IngestDeps, "db">;
+  /** How a sync reads and classifies mail. */
+  ingest: Omit<IngestDeps, "db" | "log">;
+  /** Gmail push: the topic Gmail publishes to, and the secret in the URL Pub/Sub posts to. Off when absent. */
+  pubsub?: { topic: string; token: string };
   /** Cookies are marked Secure when the app is served over HTTPS. */
   publicUrl: string;
   /** Where the browser lands after signing in. */
@@ -57,9 +68,19 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     }
   });
 
+  const runner = createSyncRunner({
+    ...options.ingest,
+    db: options.db,
+    topic: options.pubsub?.topic,
+    log: (message, data) => app.log.info(data ?? {}, message),
+  });
+  app.decorate("syncRunner", runner);
+  app.addHook("onClose", async () => runner.stopTimer());
+
   const tokenKey = deriveKey(options.tokenEncryptionKey, "refresh-token");
-  await app.register(authRoutes, { db: options.db, oauth: options.oauth, tokenKey, webUrl: options.webUrl });
-  await app.register(protectedRoutes, { db: options.db, oauth: options.oauth, tokenKey, ingest: options.ingest });
+  await app.register(authRoutes, { db: options.db, oauth: options.oauth, tokenKey, webUrl: options.webUrl, runner });
+  await app.register(protectedRoutes, { db: options.db, oauth: options.oauth, tokenKey, runner });
+  if (options.pubsub) await app.register(webhookRoutes, { db: options.db, runner, token: options.pubsub.token });
 
   return app;
 }

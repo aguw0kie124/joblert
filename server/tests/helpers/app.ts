@@ -6,6 +6,7 @@ import type { TestDb } from "./db.ts";
 
 export const TOKEN_SECRET = "t".repeat(40);
 export const WEB_URL = "http://localhost:5173";
+export const PUBSUB = { topic: "projects/joblert/topics/gmail", token: "p".repeat(40) };
 
 export const googleSignIn = (overrides: Partial<GoogleSignIn> = {}): GoogleSignIn => ({
   sub: "google-sam",

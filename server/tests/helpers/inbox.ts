@@ -12,6 +12,10 @@ export class FakeGmail implements GmailClient {
   historyId = "100";
   history: string[] | "expired" | "all" = "all";
   failOn: string | null = null;
+  /** Topics `watch` was called with, and how many times the watch was stopped. */
+  watched: string[] = [];
+  stops = 0;
+  watchError: Error | null = null;
 
   add(...messages: GmailMessage[]) {
     for (const message of messages) this.messages.set(message.id, message);
@@ -28,6 +32,15 @@ export class FakeGmail implements GmailClient {
       .sort((a, b) => Number(a.internalDate) - Number(b.internalDate))
       .map((message) => message.id);
     return { messageIds: this.history === "all" ? oldestFirst : this.history, historyId: this.historyId };
+  }
+
+  async watch(topic: string) {
+    if (this.watchError) throw this.watchError;
+    this.watched.push(topic);
+  }
+
+  async stopWatch() {
+    this.stops++;
   }
 
   async getMessage(id: string) {

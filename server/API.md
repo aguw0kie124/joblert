@@ -2,7 +2,7 @@
 
 JSON over HTTP, on `http://localhost:3000` in development.
 
-Sign in at `/auth/google`; the session cookie it sets is required on every `/api` route except `/api/health`. Everything is scoped to the signed-in user: another user's ids return `404`.
+Sign in at `/auth/google`; the session cookie it sets is required on every `/api` route except `/api/health`. `/webhooks/gmail` is called by Google, not the browser, and takes a token instead. Everything is scoped to the signed-in user: another user's ids return `404`.
 
 Errors are `{ "error": "<code>" }`: `400` `invalid_request`, `401` `not_signed_in`, `404` `not_found`, `409` a state conflict, `500` `internal_error`. Request bodies reject unknown fields.
 
@@ -18,7 +18,23 @@ Statuses: `applied`, `oa`, `interview`, `offer`, `rejected`.
 | `POST /auth/logout` | Ends the session. `204` |
 | `GET /api/me` | `{ id, email, gmailConnected, lastSyncAt }` |
 | `DELETE /api/me` | Deletes the account and all its data, and revokes Google access. `204` |
-| `POST /api/sync` | Starts a sync in the background: reads mail that arrived since the last one. The first sync of a new account reads nothing and only marks where to start. `202`. `409` `sync_in_progress` or `gmail_disconnected` |
+| `POST /api/sync` | Starts a sync in the background: reads mail that arrived since the last one. `202`. `409` `sync_in_progress` or `gmail_disconnected`. Rarely needed: mail is synced as it arrives |
+
+## Sync
+
+An inbox is synced when Gmail reports a change, once an hour as a safety net, on sign-in, and on `POST /api/sync`. Signing in starts Gmail's notifications and marks where the first sync begins; mail already in the inbox is not read.
+
+| Route | Description |
+|---|---|
+| `POST /webhooks/gmail?token=<PUBSUB_TOKEN>` | Where the Pub/Sub push subscription delivers Gmail's notifications. Only exists when `GMAIL_PUBSUB_TOPIC` and `PUBSUB_TOKEN` are set. Syncs the inbox the notification names. `204` when done, already running, or not actionable (unknown address, unreadable body, disconnected inbox). `503` when the sync hit a rate limit or outage, so Pub/Sub delivers it again. `403` on a wrong token |
+
+Google Cloud setup, in the project that holds the OAuth client:
+
+1. Enable the Pub/Sub API and create a topic. Its full name (`projects/<project>/topics/<topic>`) is `GMAIL_PUBSUB_TOPIC`.
+2. Grant `gmail-api-push@system.gserviceaccount.com` the Pub/Sub Publisher role on the topic.
+3. Create a push subscription to `<PUBLIC_URL>/webhooks/gmail?token=<PUBSUB_TOKEN>`, with an acknowledgement deadline of 120 seconds and exponential backoff retry (10 seconds to 10 minutes). The URL must be public HTTPS.
+
+Without those two settings the app still works: inboxes are synced hourly and from the dashboard.
 
 ## Applications
 

@@ -1,5 +1,5 @@
-import { expect, test } from "vitest";
-import { loadConfig, publicUrl, requireConfig } from "../src/config.ts";
+import { describe, expect, test } from "vitest";
+import { loadConfig, publicUrl, pubsubConfig, requireConfig } from "../src/config.ts";
 
 const base = { DATABASE_URL: "postgresql://u:p@localhost:5432/db" };
 
@@ -22,4 +22,52 @@ test("the public URL defaults to localhost on the configured port", () => {
   expect(publicUrl(loadConfig({ ...base, PUBLIC_URL: "https://joblert.example.com/" }))).toBe(
     "https://joblert.example.com",
   );
+});
+describe("pubsubConfig", () => {
+  const topic = "projects/joblert/topics/gmail";
+  const token = "p".repeat(40);
+  const config = (env: Record<string, string>) => loadConfig({ ...base, ...env });
+
+  test("is off when neither setting is present", () => {
+    expect(pubsubConfig(config({}))).toBeUndefined();
+  });
+
+  test("returns the topic and token when both are set", () => {
+    expect(pubsubConfig(config({ GMAIL_PUBSUB_TOPIC: topic, PUBSUB_TOKEN: token }))).toEqual({ topic, token });
+  });
+
+  test("refuses half a configuration", () => {
+    expect(() => pubsubConfig(config({ GMAIL_PUBSUB_TOPIC: topic }))).toThrow(/both/);
+    expect(() => pubsubConfig(config({ PUBSUB_TOKEN: token }))).toThrow(/both/);
+  });
+
+  test("refuses a topic that is not a full Pub/Sub name, and a short token", () => {
+    expect(() => config({ GMAIL_PUBSUB_TOPIC: "gmail" })).toThrow();
+    expect(() => config({ PUBSUB_TOKEN: "short" })).toThrow();
+  });
+});
+
+
+describe("pubsubConfig", () => {
+  const topic = "projects/joblert/topics/gmail";
+  const token = "p".repeat(40);
+  const config = (env: Record<string, string>) => loadConfig({ ...base, ...env });
+
+  test("is off when neither setting is present", () => {
+    expect(pubsubConfig(config({}))).toBeUndefined();
+  });
+
+  test("returns the topic and token when both are set", () => {
+    expect(pubsubConfig(config({ GMAIL_PUBSUB_TOPIC: topic, PUBSUB_TOKEN: token }))).toEqual({ topic, token });
+  });
+
+  test("refuses half a configuration", () => {
+    expect(() => pubsubConfig(config({ GMAIL_PUBSUB_TOPIC: topic }))).toThrow(/both/);
+    expect(() => pubsubConfig(config({ PUBSUB_TOKEN: token }))).toThrow(/both/);
+  });
+
+  test("refuses a topic that is not a full Pub/Sub name, and a short token", () => {
+    expect(() => config({ GMAIL_PUBSUB_TOPIC: "gmail" })).toThrow();
+    expect(() => config({ PUBSUB_TOKEN: "short" })).toThrow();
+  });
 });

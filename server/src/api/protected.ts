@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { GoogleOAuth } from "../auth/google.ts";
 import type { Db } from "../db/client.ts";
 import { users } from "../db/schema.ts";
-import type { IngestDeps } from "../pipeline/ingest.ts";
+import type { SyncRunner } from "../pipeline/syncRunner.ts";
 import { accountRoutes } from "./routes/account.ts";
 import { applicationRoutes } from "./routes/applications.ts";
 import { eventRoutes } from "./routes/events.ts";
@@ -21,7 +21,7 @@ export interface ProtectedOptions {
   db: Db;
   oauth: GoogleOAuth;
   tokenKey: Buffer;
-  ingest: Omit<IngestDeps, "db">;
+  runner: SyncRunner;
 }
 
 /** An error a route raises on purpose; the message is safe to show the client. */

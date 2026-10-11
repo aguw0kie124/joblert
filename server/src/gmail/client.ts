@@ -38,6 +38,13 @@ export interface GmailClient {
   listAddedSince(historyId: string): Promise<{ messageIds: string[]; historyId: string }>;
   /** The full message, or null if it no longer exists. */
   getMessage(id: string): Promise<GmailMessage | null>;
+  /**
+   * Asks Gmail to publish to a Pub/Sub topic whenever the inbox changes. A watch lasts seven days;
+   * calling this again renews it.
+   */
+  watch(topic: string): Promise<void>;
+  /** Stops the notifications `watch` started. */
+  stopWatch(): Promise<void>;
 }
 
 export interface GmailClientOptions {
@@ -99,12 +106,18 @@ export function createGmailClient(options: GmailClientOptions): GmailClient {
     if (slot > now) await sleep(slot - now);
   }
 
-  /** Returns null on 404; callers decide what a missing resource means. */
-  async function get(path: string, params: Record<string, string | undefined> = {}): Promise<unknown> {
+  /** A GET, or a POST when `body` is given. Returns null on 404; callers decide what a missing resource means. */
+  async function call(path: string, params: Record<string, string | undefined> = {}, body?: object): Promise<unknown> {
     const url = new URL(`${BASE_URL}${path}`);
     for (const [key, value] of Object.entries(params)) {
       if (value !== undefined) url.searchParams.set(key, value);
     }
+
+    const authorization = { Authorization: `Bearer ${options.accessToken}` };
+    const init: RequestInit =
+      body === undefined
+        ? { headers: authorization }
+        : { method: "POST", headers: { ...authorization, "Content-Type": "application/json" }, body: JSON.stringify(body) };
 
     let failures = 0;
     let rateLimits = 0;
@@ -112,7 +125,7 @@ export function createGmailClient(options: GmailClientOptions): GmailClient {
       await throttle();
       let response: Response;
       try {
-        response = await fetchImpl(url, { headers: { Authorization: `Bearer ${options.accessToken}` } });
+        response = await fetchImpl(url, init);
       } catch (error) {
         if (failures >= MAX_RETRIES) throw new GmailError("failed", "Gmail request failed", { cause: error });
         await sleep(1000 * 2 ** failures++);
@@ -121,7 +134,8 @@ export function createGmailClient(options: GmailClientOptions): GmailClient {
 
       if (response.ok) {
         intervalMs = Math.max(MIN_INTERVAL_MS, intervalMs * SPEED_UP);
-        return response.json();
+        // Some calls, like stopping a watch, answer with no body at all.
+        return response.json().catch(() => ({}));
       }
       if (response.status === 404) return null;
       if (response.status === 401) throw new GmailError("auth", "Gmail rejected the access token");
@@ -160,7 +174,7 @@ export function createGmailClient(options: GmailClientOptions): GmailClient {
 
   return {
     async getHistoryId() {
-      return parse(profileSchema, await get("/profile"), "profile").historyId;
+      return parse(profileSchema, await call("/profile"), "profile").historyId;
     },
 
     async listAddedSince(historyId) {
@@ -168,7 +182,7 @@ export function createGmailClient(options: GmailClientOptions): GmailClient {
       let latest = historyId;
       let pageToken: string | undefined;
       do {
-        const body = await get("/history", {
+        const body = await call("/history", {
           startHistoryId: historyId,
           historyTypes: "messageAdded",
           maxResults: String(PAGE_SIZE),
@@ -189,9 +203,19 @@ export function createGmailClient(options: GmailClientOptions): GmailClient {
     },
 
     async getMessage(id) {
-      const body = await get(`/messages/${encodeURIComponent(id)}`, { format: "full" });
+      const body = await call(`/messages/${encodeURIComponent(id)}`, { format: "full" });
       if (body === null) return null;
       return parse(messageSchema, body, "message") as GmailMessage;
+    },
+
+    async watch(topic) {
+      // Only the inbox: without the filter, the user's own sent mail and drafts would notify too.
+      const body = await call("/watch", {}, { topicName: topic, labelIds: ["INBOX"], labelFilterBehavior: "include" });
+      if (body === null) throw new GmailError("failed", "Gmail could not start watching the inbox");
+    },
+
+    async stopWatch() {
+      await call("/stop", {}, {});
     },
   };
 }

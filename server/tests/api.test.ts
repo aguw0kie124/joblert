@@ -3,8 +3,9 @@ import type { FastifyInstance } from "fastify";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { GoogleAuthError } from "../src/auth/google.ts";
 import * as schema from "../src/db/schema.ts";
+import { ClassifierError } from "../src/pipeline/classify.ts";
 import type { ReviewReason, Status } from "../src/status.ts";
-import { completeSignIn, fakeOAuth, googleSignIn, testApp, type FakeOAuth } from "./helpers/app.ts";
+import { completeSignIn, fakeOAuth, googleSignIn, PUBSUB, testApp, type FakeOAuth } from "./helpers/app.ts";
 import { freshDb, seedCursor, type TestDb } from "./helpers/db.ts";
 import { FakeGmail, fakeClassifier, fakeTriager, mail, result } from "./helpers/inbox.ts";
 
@@ -557,7 +558,8 @@ describe("syncing from the dashboard", () => {
       ingest: { classifier, triager: fakeTriager([]).triager, connect: async () => gmail, threshold: 0.85 },
     });
     const user = await signIn("sam");
-    await seedCursor(db, user.id);
+    // Signing in runs a first sync, which reads nothing and marks where the next one starts.
+    if (gmail) await vi.waitFor(async () => expect(await db.select().from(schema.syncState)).toHaveLength(1));
     return user;
   }
 
@@ -567,7 +569,7 @@ describe("syncing from the dashboard", () => {
     const response = await call(sam, "POST", "/api/sync");
 
     expect(response.statusCode).toBe(202);
-    await vi.waitFor(async () => expect((await db.select().from(schema.syncState))[0]!.historyId).toBe("100"));
+    await vi.waitFor(async () => expect(await db.select().from(schema.applications)).toHaveLength(1));
     expect(await db.select().from(schema.applications)).toMatchObject([{ userId: sam.id, company: "Stripe" }]);
   });
 
@@ -600,7 +602,120 @@ describe("syncing from the dashboard", () => {
   });
 });
 
+describe("Gmail notifications", () => {
+  const CONFIRMATION = "Thank you for applying to Stripe";
+  let inboxes: Map<string, FakeGmail>;
+  let answers: ReturnType<typeof fakeClassifier>["answers"];
+
+  const notify = (emailAddress: string, token = PUBSUB.token) =>
+    app.inject({
+      method: "POST",
+      url: `/webhooks/gmail?token=${token}`,
+      payload: {
+        message: {
+          data: Buffer.from(JSON.stringify({ emailAddress, historyId: 9876 })).toString("base64"),
+          messageId: "1",
+        },
+        subscription: "projects/joblert/subscriptions/gmail",
+      },
+    });
+  const applications = () => db.select().from(schema.applications);
+
+  // Both users have the same confirmation waiting, so a notification for one must leave the other's unread.
+  beforeEach(async () => {
+    inboxes = new Map();
+    const fake = fakeClassifier({ [CONFIRMATION]: result("applied") });
+    answers = fake.answers;
+    app = await testApp(db, oauth, {
+      pubsub: PUBSUB,
+      ingest: {
+        classifier: fake.classifier,
+        triager: fakeTriager([]).triager,
+        connect: async (userId) => inboxes.get(userId) ?? null,
+        threshold: 0.85,
+      },
+    });
+    for (const user of [sam, alex]) {
+      inboxes.set(user.id, new FakeGmail().add(mail("m1", CONFIRMATION, day(1))));
+      await seedCursor(db, user.id);
+    }
+  });
+
+  test("sync the inbox they name, and nobody else's", async () => {
+    const response = await notify("sam@example.com");
+
+    expect(response.statusCode).toBe(204);
+    expect(await applications()).toMatchObject([{ userId: sam.id, company: "Stripe" }]);
+  });
+
+  test("match the address whatever its case", async () => {
+    expect((await notify("Sam@Example.COM")).statusCode).toBe(204);
+    expect(await applications()).toHaveLength(1);
+  });
+
+  test.each([
+    ["the wrong token", () => notify("sam@example.com", "w".repeat(40))],
+    ["no token", () => app.inject({ method: "POST", url: "/webhooks/gmail", payload: {} })],
+  ])("are refused with %s", async (_name, send) => {
+    expect((await send()).statusCode).toBe(403);
+    expect(await applications()).toEqual([]);
+  });
+
+  test.each([
+    ["an address nobody signed in with", () => notify("stranger@example.com")],
+    [
+      "a body that isn't a notification",
+      () =>
+        app.inject({
+          method: "POST",
+          url: `/webhooks/gmail?token=${PUBSUB.token}`,
+          payload: { message: { data: "bm90IGpzb24=" } },
+        }),
+    ],
+  ])("are acknowledged but sync nothing for %s", async (_name, send) => {
+    expect((await send()).statusCode).toBe(204);
+    expect(await applications()).toEqual([]);
+  });
+
+  test("ask to be sent again when the sync is rate limited, and the redelivery finishes the work", async () => {
+    answers[CONFIRMATION] = new ClassifierError("unavailable", "rate limited");
+    const first = await notify("sam@example.com");
+    expect(first.statusCode).toBe(503);
+    expect(await applications()).toEqual([]);
+
+    answers[CONFIRMATION] = result("applied");
+    expect((await notify("sam@example.com")).statusCode).toBe(204);
+    expect(await applications()).toMatchObject([{ userId: sam.id }]);
+  });
+
+  test("are acknowledged when the inbox has been disconnected", async () => {
+    inboxes.delete(sam.id);
+    expect((await notify("sam@example.com")).statusCode).toBe(204);
+  });
+
+  test("have no route when push is not configured", async () => {
+    app = await testApp(db, oauth);
+    expect((await notify("sam@example.com")).statusCode).toBe(404);
+  });
+});
+
 describe("deleting an account", () => {
+  test("stops Gmail's notifications when push is in use", async () => {
+    const gmail = new FakeGmail();
+    app = await testApp(db, oauth, {
+      pubsub: PUBSUB,
+      ingest: {
+        classifier: fakeClassifier({}).classifier,
+        triager: fakeTriager([]).triager,
+        connect: async (userId) => (userId === sam.id ? gmail : null),
+        threshold: 0.85,
+      },
+    });
+
+    expect((await call(sam, "DELETE", "/api/me")).statusCode).toBe(204);
+    expect(gmail.stops).toBe(1);
+  });
+
   test("removes everything the user owns, revokes Google access, and ends the session", async () => {
     const stripe = await addApplication(sam.id);
     await addReview(sam.id, { candidates: [stripe.id] });

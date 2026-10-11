@@ -21,7 +21,15 @@ const envSchema = z.object({
   GOOGLE_CLIENT_SECRET: optional,
   SESSION_SECRET: optional,
   TOKEN_ENCRYPTION_KEY: optional,
-  CRON_SECRET: optional,
+
+  // Gmail push. Both or neither: without them the inbox is only synced hourly and from the dashboard.
+  // The Pub/Sub topic Gmail publishes inbox changes to: projects/<project>/topics/<topic>.
+  GMAIL_PUBSUB_TOPIC: z
+    .string()
+    .regex(/^projects\/[^/]+\/topics\/[^/]+$/)
+    .optional(),
+  // Secret in the URL the Pub/Sub subscription posts to: <PUBLIC_URL>/webhooks/gmail?token=<this>.
+  PUBSUB_TOKEN: z.string().min(32).optional(),
 });
 
 export type Config = z.infer<typeof envSchema>;
@@ -43,6 +51,14 @@ export function requireConfig<K extends keyof Config>(config: Config, keys: read
   const missing = keys.filter((key) => config[key] === undefined);
   if (missing.length) throw new Error(`Missing required environment variables: ${missing.join(", ")}`);
   return config as Present<K>;
+}
+
+/** The Gmail push settings, or undefined when push is off. Half a configuration is a mistake, not "off". */
+export function pubsubConfig(config: Pick<Config, "GMAIL_PUBSUB_TOPIC" | "PUBSUB_TOKEN">) {
+  const { GMAIL_PUBSUB_TOPIC: topic, PUBSUB_TOKEN: token } = config;
+  if (!topic && !token) return undefined;
+  if (!topic || !token) throw new Error("Set both GMAIL_PUBSUB_TOPIC and PUBSUB_TOKEN, or neither");
+  return { topic, token };
 }
 
 export function publicUrl(config: Pick<Config, "PUBLIC_URL" | "PORT">): string {
