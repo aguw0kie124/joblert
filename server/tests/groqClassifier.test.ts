@@ -15,6 +15,8 @@ const output = (overrides: Record<string, unknown> = {}) => ({
   kind: "oa",
   company: "Databricks",
   role: null,
+  location: null,
+  job_id: null,
   confidence: 0.96,
   evidence: "invited you to complete a coding assessment",
   summary: "Databricks sent a coding assessment due October 12.",

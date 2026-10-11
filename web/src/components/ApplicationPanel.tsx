@@ -18,6 +18,7 @@ interface FieldValues {
   role: string;
   status: Status;
   location: string;
+  jobId: string;
   jobUrl: string;
   appliedAt: string;
   notes: string;
@@ -28,6 +29,7 @@ const blank = (): FieldValues => ({
   role: "",
   status: "applied",
   location: "",
+  jobId: "",
   jobUrl: "",
   appliedAt: toDateInput(new Date().toISOString()),
   notes: "",
@@ -38,6 +40,7 @@ const fromApplication = (a: Application): FieldValues => ({
   role: a.role,
   status: a.status,
   location: a.location ?? "",
+  jobId: a.jobId ?? "",
   jobUrl: a.jobUrl ?? "",
   appliedAt: toDateInput(a.appliedAt),
   notes: a.notes ?? "",
@@ -55,6 +58,8 @@ function toPatch(field: TextField, raw: string): Partial<ApplicationInput> | und
       return { role: value };
     case "location":
       return { location: value || null };
+    case "jobId":
+      return { jobId: value || null };
     case "jobUrl":
       return { jobUrl: normalizeUrl(value) };
     case "appliedAt":
@@ -132,6 +137,10 @@ function Fields({ initial, onCommit }: { initial: FieldValues; onCommit?: (patch
       <div className="field">
         <label htmlFor="f-location">Location</label>
         <input key={initial.location} {...text("location")} {...line} id="f-location" placeholder="Empty" maxLength={200} />
+      </div>
+      <div className="field">
+        <label htmlFor="f-job-id">Job ID</label>
+        <input key={initial.jobId} {...text("jobId")} {...line} id="f-job-id" placeholder="Empty" maxLength={100} />
       </div>
       <div className="field">
         <label htmlFor="f-url">Job URL</label>
@@ -287,6 +296,7 @@ export function AddPanel() {
       {
         ...read("role"),
         ...read("location"),
+        ...read("jobId"),
         ...read("jobUrl"),
         ...read("appliedAt"),
         ...read("notes"),

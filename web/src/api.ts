@@ -16,6 +16,7 @@ export interface Application {
   role: string;
   jobUrl: string | null;
   location: string | null;
+  jobId: string | null;
   appliedAt: string;
   status: Status;
   statusUpdatedAt: string;
@@ -64,6 +65,7 @@ export interface ApplicationInput {
   role: string;
   jobUrl: string | null;
   location: string | null;
+  jobId: string | null;
   notes: string | null;
   appliedAt: string;
   status: Status;

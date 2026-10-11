@@ -42,7 +42,7 @@ Without those two settings the app still works: inboxes are synced hourly and fr
 |---|---|
 | `GET /api/applications` | Optional `status` and `q` (company or role). Returns `{ applications, counts }`, where `counts` is per status across all applications |
 | `GET /api/applications/:id` | `{ application, events }`, events newest first, each with its source email |
-| `POST /api/applications` | Add by hand. Body: `company` (required), `role`, `jobUrl`, `location`, `notes`, `appliedAt`, `status`. `201` |
+| `POST /api/applications` | Add by hand. Body: `company` (required), `role`, `jobUrl`, `location`, `jobId` (the employer's requisition number), `notes`, `appliedAt`, `status`. `201` |
 | `PATCH /api/applications/:id` | Same fields, all optional. A manual status change can go to any status |
 | `DELETE /api/applications/:id` | Deletes it and its timeline. `204` |
 

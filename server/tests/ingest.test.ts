@@ -213,6 +213,35 @@ describe("later syncs", () => {
     expect((await rows.applications()).map((a) => a.role).sort()).toEqual(["Backend Engineer", "Product Designer"]);
   });
 
+  test("similar roles at one company stay separate, and a job id sends later mail to the right one", async () => {
+    const confirmations = {
+      "IBM: Software Engineer": result("applied", { company: "IBM", role: "Software Engineer", jobId: "R-100" }),
+      "IBM: Software Engineer Intern": result("applied", { company: "IBM", role: "Software Engineer Intern", jobId: "R-200" }),
+      "IBM: Software Engineer Intern (Austin)": result("applied", {
+        company: "IBM",
+        role: "Software Engineer Intern",
+        location: "Austin, TX",
+        jobId: "R-300",
+      }),
+    };
+    Object.keys(confirmations).forEach((subject, index) => gmail.add(mail(`m${index}`, subject, day(index + 1))));
+    gmail.add(mail("m9", "IBM: update", day(8)));
+    const { classifier } = fakeClassifier({
+      ...confirmations,
+      "IBM: update": result("rejected", { company: "IBM", role: "Software Engineer", jobId: "R-200" }),
+    });
+
+    const stats = await pollUser(deps(classifier), userId, gmail);
+
+    expect(stats).toMatchObject({ created: 3, updated: 1, review: 0 });
+    const applications = await db.select().from(schema.applications).orderBy(schema.applications.appliedAt);
+    expect(applications.map((a) => [a.role, a.location, a.jobId, a.status])).toEqual([
+      ["Software Engineer", null, "R-100", "applied"],
+      ["Software Engineer Intern", null, "R-200", "rejected"],
+      ["Software Engineer Intern", "Austin, TX", "R-300", "applied"],
+    ]);
+  });
+
   test("a low-confidence result goes to review and leaves the status alone", async () => {
     const { classifier, answers } = await confirmed();
     answers[REJECTION] = result("rejected", { confidence: 0.6 });

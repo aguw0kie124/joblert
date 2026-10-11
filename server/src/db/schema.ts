@@ -38,6 +38,8 @@ export const applications = pgTable(
     jobUrl: text("job_url"),
     ats: text("ats"),
     location: text("location"),
+    // The employer's id for the posting. Tells apart applications to similar roles at one company.
+    jobId: text("job_id"),
     appliedAt: timestamptz("applied_at").notNull(),
     status: text("status", { enum: STATUSES }).notNull().default("applied"),
     statusUpdatedAt: timestamptz("status_updated_at").notNull().defaultNow(),

@@ -71,7 +71,10 @@ export function decideOutcome(
       senderEmail: email.senderEmail,
       company: classification.company,
       role: classification.role,
+      location: classification.location,
+      jobId: classification.jobId,
       receivedAt: email.receivedAt,
+      confirmation: kind === "applied",
     },
     known,
   );
@@ -200,6 +203,8 @@ class UserPoll {
         id: applications.id,
         company: applications.company,
         role: applications.role,
+        location: applications.location,
+        jobId: applications.jobId,
         appliedAt: applications.appliedAt,
         status: applications.status,
       })
@@ -373,6 +378,8 @@ class UserPoll {
               userId,
               company: outcome.company,
               role: outcome.role,
+              location: classification!.location,
+              jobId: classification!.jobId,
               ats: isAtsDomain(domain) ? domainLabel(domain) : null,
               appliedAt: email.receivedAt,
               status: outcome.status,

@@ -6,7 +6,14 @@ export interface MatchEmail {
   /** Company and role as extracted by the classifier; null when the email doesn't name them. */
   company: string | null;
   role: string | null;
+  location: string | null;
+  jobId: string | null;
   receivedAt: Date;
+  /**
+   * The email confirms a newly submitted application. Each application sends its own confirmation, so it only
+   * belongs to an existing one when it is plainly the same posting: same thread, same job id, or the same title.
+   */
+  confirmation: boolean;
 }
 
 export interface MatchCandidate {
@@ -14,6 +21,9 @@ export interface MatchCandidate {
   company: string;
   /** Empty when the application was logged from an email that named no role. */
   role: string;
+  location: string | null;
+  /** The employer's id for the posting, when an email gave one. */
+  jobId: string | null;
   appliedAt: Date;
   /** Gmail threads already linked to this application. */
   threadIds: readonly string[];
@@ -25,7 +35,7 @@ export interface ScoredCandidate {
 }
 
 export type MatchResult =
-  | { type: "match"; applicationId: string; score: number; via: "thread" | "score" }
+  | { type: "match"; applicationId: string; score: number; via: "thread" | "job_id" | "score" }
   | { type: "ambiguous"; candidates: ScoredCandidate[] }
   | { type: "none" };
 
@@ -69,6 +79,22 @@ export function roleSimilarity(a: string, b: string): { jaccard: number; overlap
   return { jaccard: shared / (ta.size + tb.size - shared), overlap: shared / Math.min(ta.size, tb.size) };
 }
 
+const alphanumeric = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, "");
+
+/** True or false when both sides carry a job id; null when either doesn't, so the id says nothing. */
+function sameJobId(a: string | null, b: string | null): boolean | null {
+  const [x, y] = [alphanumeric(a ?? ""), alphanumeric(b ?? "")];
+  return x && y ? x === y : null;
+}
+
+/** Compares the place before the first comma, so "Austin, TX" and "Austin, Texas" agree. Unknown never differs. */
+function differentPlace(a: string | null, b: string | null): boolean {
+  const place = (value: string | null) =>
+    (value ?? "").split(",")[0]!.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const [x, y] = [place(a), place(b)];
+  return Boolean(x && y) && !x.includes(y) && !y.includes(x);
+}
+
 function companyEvidence(email: MatchEmail, candidate: MatchCandidate): number {
   const named = email.company ? companySimilarity(email.company, candidate.company) : 0;
   const domain = domainMatchesCompany(emailDomain(email.senderEmail), candidate.company) ? DOMAIN_EVIDENCE : 0;
@@ -86,6 +112,7 @@ export function matchEmail(email: MatchEmail, candidates: readonly MatchCandidat
   }
 
   const scored: ScoredCandidate[] = [];
+  const sameId: ScoredCandidate[] = [];
   for (const candidate of candidates) {
     // An email can't be about an application that didn't exist yet.
     if (email.receivedAt.getTime() < candidate.appliedAt.getTime() - EARLY_TOLERANCE_MS) continue;
@@ -93,15 +120,29 @@ export function matchEmail(email: MatchEmail, candidates: readonly MatchCandidat
     const company = companyEvidence(email, candidate);
     if (company === 0) continue;
 
+    // A shared job id settles it whatever the title says; a different one, or another city, is another posting.
+    const idMatch = sameJobId(email.jobId, candidate.jobId);
+    if (idMatch) {
+      sameId.push({ applicationId: candidate.id, score: 1 });
+      continue;
+    }
+    if (idMatch === false || differentPlace(email.location, candidate.location)) continue;
+
     let role = 0.5; // neutral when either side names no role
     if (email.role && roleTokens(candidate.role).size > 0) {
       const similarity = roleSimilarity(email.role, candidate.role);
-      if (similarity.overlap < ROLE_CONTRADICTION) continue;
+      // Later mail often shortens the title; a confirmation states it in full, so anything but the same title is a new application.
+      if (email.confirmation ? similarity.jaccard < 1 : similarity.overlap < ROLE_CONTRADICTION) continue;
       role = similarity.jaccard;
+    } else if (email.confirmation) {
+      continue;
     }
 
     scored.push({ applicationId: candidate.id, score: company * 0.6 + role * 0.4 });
   }
+
+  if (sameId.length === 1) return { type: "match", applicationId: sameId[0]!.applicationId, score: 1, via: "job_id" };
+  if (sameId.length > 1) return { type: "ambiguous", candidates: sameId.slice(0, MAX_AMBIGUOUS) };
 
   scored.sort((a, b) => b.score - a.score);
   const [best, runnerUp] = scored;

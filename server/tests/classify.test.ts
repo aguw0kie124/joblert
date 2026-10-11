@@ -19,6 +19,8 @@ const raw = (overrides: Record<string, unknown> = {}) => ({
   kind: "rejected",
   company: "Stripe",
   role: "Backend Engineer",
+  location: null,
+  job_id: null,
   confidence: 0.95,
   evidence: "we've decided not to move forward with your application",
   summary: "Stripe rejected the application.",
@@ -40,12 +42,24 @@ describe("finalizeClassification", () => {
       company: "Stripe",
       companyAsWritten: "Stripe",
       role: "Backend Engineer",
+      location: null,
+      jobId: null,
       confidence: 0.95,
       evidence: "we've decided not to move forward with your application",
       summary: "Stripe rejected the application.",
       deadline: null,
       interviewAt: null,
     });
+  });
+
+  test("keeps the location, and a job id only when the email contains it", () => {
+    const withId = { ...email, subject: "Your application for Backend Engineer (R-10432)" };
+    expect(finalizeClassification(raw({ location: " Austin, TX ", job_id: "r-10432" }), withId)).toMatchObject({
+      location: "Austin, TX",
+      jobId: "r-10432",
+    });
+    expect(finalizeClassification(raw({ job_id: "R-99999" }), withId).jobId).toBeNull();
+    expect(finalizeClassification(raw({ location: "", job_id: "" }), withId)).toMatchObject({ location: null, jobId: null });
   });
 
   test.each([

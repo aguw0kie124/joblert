@@ -12,6 +12,8 @@ const day = (n: number) => new Date(Date.UTC(2026, 8, n));
 const application = (overrides: Partial<MatchCandidate> & { id: string }): MatchCandidate => ({
   company: "Stripe",
   role: "Backend Engineer",
+  location: null,
+  jobId: null,
   appliedAt: day(1),
   threadIds: [],
   ...overrides,
@@ -22,8 +24,74 @@ const email = (overrides: Partial<MatchEmail> = {}): MatchEmail => ({
   senderEmail: "no-reply@greenhouse.io",
   company: "Stripe",
   role: "Backend Engineer",
+  location: null,
+  jobId: null,
   receivedAt: day(10),
+  confirmation: false,
   ...overrides,
+});
+
+describe("several applications at one company", () => {
+  const confirmation = (overrides: Partial<MatchEmail> = {}) => email({ confirmation: true, ...overrides });
+
+  test("a confirmation for a longer or shorter title is a new application", () => {
+    const tracked = [application({ id: "swe", role: "Software Engineer" })];
+    expect(matchEmail(confirmation({ role: "Software Engineer Intern" }), tracked)).toEqual({ type: "none" });
+    expect(matchEmail(confirmation({ role: "Engineer" }), tracked)).toEqual({ type: "none" });
+  });
+
+  test("a confirmation with the same title, however it is abbreviated, is the same application", () => {
+    const result = matchEmail(confirmation({ role: "Sr. Software Eng" }), [
+      application({ id: "senior", role: "Senior Software Engineer" }),
+    ]);
+    expect(result).toMatchObject({ type: "match", applicationId: "senior" });
+  });
+
+  test("a confirmation that names no title is a new application, unless it is in the thread", () => {
+    const tracked = [application({ id: "a", threadIds: ["thread-1"] })];
+    expect(matchEmail(confirmation({ role: null }), tracked)).toEqual({ type: "none" });
+    expect(matchEmail(confirmation({ role: null, threadId: "thread-1" }), tracked)).toMatchObject({ via: "thread" });
+  });
+
+  test("the same title in another city is a different application", () => {
+    const tracked = [application({ id: "austin", location: "Austin, TX" })];
+    expect(matchEmail(confirmation({ location: "Dallas, TX" }), tracked)).toEqual({ type: "none" });
+    expect(matchEmail(confirmation({ location: "Austin, Texas" }), tracked)).toMatchObject({ applicationId: "austin" });
+    expect(matchEmail(confirmation({ location: null }), tracked)).toMatchObject({ applicationId: "austin" });
+  });
+
+  test("the same title under another job id is a different application", () => {
+    const tracked = [application({ id: "first", jobId: "R-100" })];
+    expect(matchEmail(confirmation({ jobId: "R-200" }), tracked)).toEqual({ type: "none" });
+    expect(matchEmail(email({ jobId: "R-200" }), tracked)).toEqual({ type: "none" });
+  });
+
+  test("a shared job id picks the application whatever the title says", () => {
+    const tracked = [
+      application({ id: "intern", role: "Software Engineer Intern", jobId: "R-100" }),
+      application({ id: "new-grad", role: "Software Engineer, New Grad", jobId: "R-200" }),
+      application({ id: "no-id", role: "Software Engineer" }),
+    ];
+    expect(matchEmail(email({ role: "Software Engineer", jobId: "r 200" }), tracked)).toEqual({
+      type: "match",
+      applicationId: "new-grad",
+      score: 1,
+      via: "job_id",
+    });
+    expect(matchEmail(confirmation({ role: "SWE", jobId: "R-100" }), tracked)).toMatchObject({ applicationId: "intern" });
+  });
+
+  test("later mail still follows a shortened title, and location narrows it down", () => {
+    const tracked = [
+      application({ id: "austin", role: "Software Engineer Intern", location: "Austin, TX" }),
+      application({ id: "dallas", role: "Software Engineer Intern", location: "Dallas, TX" }),
+    ];
+    expect(matchEmail(email({ role: "Software Engineer" }), tracked).type).toBe("ambiguous");
+    expect(matchEmail(email({ role: "Software Engineer", location: "Dallas" }), tracked)).toMatchObject({
+      type: "match",
+      applicationId: "dallas",
+    });
+  });
 });
 
 describe("matchEmail", () => {

@@ -18,6 +18,10 @@ export interface Classification {
   /** The employer as the email names it; differs from `company` only when that was resolved to a tracked one. */
   companyAsWritten: string | null;
   role: string | null;
+  /** Where the job is based, as the email states it. */
+  location: string | null;
+  /** The employer's own id for the posting (requisition number); only kept when it appears in the email. */
+  jobId: string | null;
   confidence: number;
   /** Verbatim quote from the email supporting `kind`; empty for "other". */
   evidence: string;
@@ -58,6 +62,14 @@ export const rawClassificationSchema = z.object({
   kind: z.enum(EMAIL_KINDS),
   company: z.string().nullable().describe("The hiring company, not the ATS or assessment platform. Null if unknown."),
   role: z.string().nullable().describe("The job title as written in the email. Null if not stated."),
+  location: z
+    .string()
+    .nullable()
+    .describe("Where the job is based, as written: a city, a region, or Remote. Null if not stated."),
+  job_id: z
+    .string()
+    .nullable()
+    .describe("The employer's requisition or job id for this posting, copied exactly, e.g. R-12345. Null if none is shown."),
   confidence: z.number().min(0).max(1),
   evidence: z
     .string()
@@ -119,6 +131,12 @@ function plausibleDate(value: string | null, receivedAt: Date): Date | null {
 
 const blankToNull = (value: string | null) => value?.trim() || null;
 
+/** An id decides which application an email belongs to, so one the email doesn't contain is dropped. */
+function jobIdFrom(value: string | null, email: ClassifierInput): string | null {
+  const id = blankToNull(value);
+  return id && `${email.subject}\n${email.text}`.toLowerCase().includes(id.toLowerCase()) ? id : null;
+}
+
 /** Validates untrusted classifier output against the schema and the email it claims to describe. */
 export function finalizeClassification(
   raw: unknown,
@@ -145,6 +163,8 @@ export function finalizeClassification(
     company: knownCompany ?? companyAsWritten,
     companyAsWritten,
     role: blankToNull(data.role),
+    location: data.job_related ? blankToNull(data.location) : null,
+    jobId: data.job_related ? jobIdFrom(data.job_id, email) : null,
     confidence: data.confidence,
     evidence: kind === "other" ? "" : data.evidence.trim(),
     summary: data.summary.trim(),

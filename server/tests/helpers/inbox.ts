@@ -77,6 +77,8 @@ export const result = (kind: EmailKind, overrides: Partial<Classification> = {})
   company: "Stripe",
   companyAsWritten: overrides.company === undefined ? "Stripe" : overrides.company,
   role: "Backend Engineer",
+  location: null,
+  jobId: null,
   confidence: 0.95,
   evidence: kind === "other" ? "" : "Body of",
   summary: `Summary for ${kind}`,
