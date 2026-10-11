@@ -39,7 +39,8 @@ export function testApp(db: TestDb, oauth: GoogleOAuth, overrides: Partial<AppOp
       classifier: { classify: async () => Promise.reject(new Error("no classifier in this test")) },
       connect: async () => null,
       threshold: 0.85,
-      backfillDays: 90,
+      triager: null,
+      backfillDays: 30,
     },
     ...overrides,
   });

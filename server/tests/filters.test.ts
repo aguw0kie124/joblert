@@ -16,7 +16,7 @@ describe("filterEmail keeps", () => {
     ["Ashby", "notifications@ashbyhq.com"],
     ["HackerRank", "support@hackerrankforwork.com"],
   ])("mail from %s", (_name, senderEmail) => {
-    expect(filterEmail(email({ senderEmail }))).toEqual({ relevant: true, reason: "ats_domain" });
+    expect(filterEmail(email({ senderEmail }))).toEqual({ verdict: "relevant", reason: "ats_domain" });
   });
 
   test.each([
@@ -29,36 +29,17 @@ describe("filterEmail keeps", () => {
     "Update on your candidacy",
     "Your offer letter from Acme",
   ])("subject %j", (subject) => {
-    expect(filterEmail(email({ subject }))).toEqual({ relevant: true, reason: "keyword" });
+    expect(filterEmail(email({ subject }))).toEqual({ verdict: "relevant", reason: "keyword" });
   });
 
   test("an unambiguous phrase in the body", () => {
     const body = "Hi Sam,\n\nUnfortunately, we have decided not to proceed with your application at this time.";
-    expect(filterEmail(email({ subject: "Acme update", body }))).toEqual({ relevant: true, reason: "keyword" });
-  });
-
-  test("a recruiter writing from a tracked company's domain", () => {
-    const result = filterEmail(
-      email({ senderEmail: "jane@stripe.com", subject: "Quick chat?", knownCompanies: ["Stripe, Inc."] }),
-    );
-    expect(result).toEqual({ relevant: true, reason: "known_company" });
-  });
-
-  test("a tracked company named in the sender display name", () => {
-    const result = filterEmail(
-      email({
-        senderEmail: "notifications@mail.example-ats.com",
-        senderName: "Palantir Technologies",
-        subject: "An update",
-        knownCompanies: ["Palantir"],
-      }),
-    );
-    expect(result).toEqual({ relevant: true, reason: "known_company" });
+    expect(filterEmail(email({ subject: "Acme update", body }))).toEqual({ verdict: "relevant", reason: "keyword" });
   });
 
   test("any reply in a thread already linked to an application, even an alert-like one", () => {
     const result = filterEmail(email({ subject: "Re: apply now", inKnownThread: true }));
-    expect(result).toEqual({ relevant: true, reason: "known_thread" });
+    expect(result).toEqual({ verdict: "relevant", reason: "known_thread" });
   });
 });
 
@@ -71,22 +52,20 @@ describe("filterEmail drops", () => {
     ["team@careersite.com", "Weekly digest: interview prep"],
     ["no-reply@greenhouse.io", "Job alert: new roles at Acme"],
   ])("alerts and marketing from %s: %j", (senderEmail, subject) => {
-    expect(filterEmail(email({ senderEmail, subject }))).toEqual({ relevant: false, reason: "excluded" });
+    expect(filterEmail(email({ senderEmail, subject }))).toEqual({ verdict: "excluded" });
   });
 
+});
+
+describe("filterEmail leaves to the triage", () => {
   test.each([
     ["orders@shop.com", "Your order has shipped", "Thanks for your purchase. Special offer inside."],
     ["friend@gmail.com", "Dinner on Friday?", "Unfortunately I can't make it."],
     ["billing@saas.com", "Invoice for October", undefined],
-  ])("unrelated mail from %s", (senderEmail, subject, body) => {
-    expect(filterEmail(email({ senderEmail, subject, body }))).toEqual({ relevant: false, reason: "no_signal" });
-  });
-
-  test("mail from a company that is not tracked", () => {
-    const result = filterEmail(
-      email({ senderEmail: "jane@stripe.com", subject: "Quick chat?", knownCompanies: ["Square"] }),
-    );
-    expect(result.relevant).toBe(false);
+    // A sender alone says nothing: a tracked company also sends card offers and account notices.
+    ["jane@stripe.com", "Quick chat?", undefined],
+  ])("mail no rule settles, from %s", (senderEmail, subject, body) => {
+    expect(filterEmail(email({ senderEmail, subject, body }))).toEqual({ verdict: "unsure" });
   });
 });
 

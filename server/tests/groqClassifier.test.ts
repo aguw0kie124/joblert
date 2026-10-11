@@ -77,6 +77,40 @@ describe("groq classifier", () => {
     );
   });
 
+  test("lists the tracked companies and limits known_company to exactly those names", async () => {
+    const { classifier, fetchMock } = setup(completion(output({ company: "DBX", known_company: "Databricks" })));
+
+    const result = await classifier.classify(email, { knownCompanies: ["Databricks", "Stripe", "Databricks"] });
+    expect(result).toMatchObject({ company: "Databricks", companyAsWritten: "DBX" });
+
+    const body = JSON.parse(fetchMock.mock.calls[0]![1]!.body as string);
+    expect(body.messages[1].content).toBe(
+      `<tracked_companies>\nDatabricks\nStripe\n</tracked_companies>\n${buildUserMessage(email)}`,
+    );
+    const schema = body.response_format.json_schema.schema;
+    expect(schema.required).toContain("known_company");
+    expect(schema.properties.known_company.anyOf).toEqual([
+      { type: "string", enum: ["Databricks", "Stripe"] },
+      { type: "null" },
+    ]);
+  });
+
+  test("asks for no known_company when nothing is tracked", async () => {
+    const { classifier, fetchMock } = setup(completion(output()));
+    await classifier.classify(email, { knownCompanies: [] });
+    const body = JSON.parse(fetchMock.mock.calls[0]![1]!.body as string);
+    expect(body.response_format.json_schema.schema.properties).not.toHaveProperty("known_company");
+  });
+
+  test("retries when the model names a company that is not tracked", async () => {
+    const { classifier, fetchMock } = setup(
+      completion(output({ known_company: "Snowflake" })),
+      completion(output({ known_company: null })),
+    );
+    expect((await classifier.classify(email, { knownCompanies: ["Stripe"] })).company).toBe("Databricks");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   test("retries once when the evidence is not in the email, then succeeds", async () => {
     const { classifier, fetchMock } = setup(
       completion(output({ evidence: "you have been selected for an assessment" })),

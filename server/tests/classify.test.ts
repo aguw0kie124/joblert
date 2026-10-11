@@ -43,6 +43,7 @@ describe("finalizeClassification", () => {
       jobRelated: true,
       kind: "rejected",
       company: "Stripe",
+      companyAsWritten: "Stripe",
       role: "Backend Engineer",
       confidence: 0.95,
       evidence: "we've decided not to move forward with your application",
@@ -101,6 +102,33 @@ describe("finalizeClassification", () => {
     ["more than a year out", "2028-01-01"],
   ])("drops a deadline that is %s", (_name, deadline) => {
     expect(finalizeClassification(raw({ deadline }), email, "llm").deadline).toBeNull();
+  });
+});
+
+describe("finalizeClassification with tracked companies", () => {
+  const tracked = ["Procter & Gamble", "Stripe"];
+
+  test("uses the tracked name when the model says it is the same employer, and keeps what the email said", () => {
+    const result = finalizeClassification(raw({ company: "P&G", known_company: "Procter & Gamble" }), email, "llm", tracked);
+    expect(result).toMatchObject({ company: "Procter & Gamble", companyAsWritten: "P&G" });
+  });
+
+  test("keeps the email's own name when the model matches none", () => {
+    const result = finalizeClassification(raw({ company: "Ramp", known_company: null }), email, "llm", tracked);
+    expect(result).toMatchObject({ company: "Ramp", companyAsWritten: "Ramp" });
+  });
+
+  test("rejects a company that is not on the list", () => {
+    expectInvalid(() => finalizeClassification(raw({ known_company: "Procter and Gamble" }), email, "llm", tracked));
+  });
+
+  test("rejects an answer that leaves the field out", () => {
+    expectInvalid(() => finalizeClassification(raw(), email, "llm", tracked));
+  });
+
+  test("ignores a tracked company on mail that is not job related", () => {
+    const result = finalizeClassification(raw({ job_related: false, known_company: "Stripe" }), email, "llm", tracked);
+    expect(result).toMatchObject({ jobRelated: false, companyAsWritten: "Stripe" });
   });
 });
 

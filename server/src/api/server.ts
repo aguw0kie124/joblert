@@ -3,7 +3,7 @@ import { loadConfig, publicUrl, requireConfig } from "../config.ts";
 import { deriveKey } from "../auth/secrets.ts";
 import { createDb } from "../db/client.ts";
 import { createGmailConnector } from "../gmail/connect.ts";
-import { createClassifier } from "../pipeline/createClassifier.ts";
+import { createClassifier, createTriager } from "../pipeline/createClassifier.ts";
 import { buildApp } from "./app.ts";
 
 const config = requireConfig(loadConfig(), [
@@ -28,6 +28,7 @@ const app = await buildApp({
   tokenEncryptionKey: config.TOKEN_ENCRYPTION_KEY,
   ingest: {
     classifier: createClassifier(config),
+    triager: createTriager(config),
     connect: createGmailConnector({ db, oauth, tokenKey: deriveKey(config.TOKEN_ENCRYPTION_KEY, "refresh-token") }),
     threshold: config.AUTO_APPLY_CONFIDENCE,
     backfillDays: config.BACKFILL_DAYS,

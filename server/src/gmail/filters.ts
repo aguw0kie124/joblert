@@ -1,19 +1,21 @@
-import { companySimilarity, domainMatchesCompany, emailDomain } from "../pipeline/company.ts";
+import { emailDomain } from "../pipeline/company.ts";
 
 export interface FilterInput {
   senderEmail: string;
-  senderName?: string;
   subject: string;
   body?: string;
   /** The message belongs to a Gmail thread already linked to an application. */
   inKnownThread?: boolean;
-  /** Companies already in the tracker. */
-  knownCompanies?: readonly string[];
 }
 
+/**
+ * relevant: goes straight to the classifier. excluded: dropped.
+ * unsure: no rule settles it, so the triage decides (and it is dropped when there is no triage to ask).
+ */
 export type FilterResult =
-  | { relevant: true; reason: "known_thread" | "ats_domain" | "known_company" | "keyword" }
-  | { relevant: false; reason: "excluded" | "no_signal" };
+  | { verdict: "relevant"; reason: "known_thread" | "ats_domain" | "keyword" }
+  | { verdict: "excluded" }
+  | { verdict: "unsure" };
 
 // Applicant tracking systems and assessment platforms. Matched as a domain suffix.
 const ATS_DOMAINS = [
@@ -97,28 +99,20 @@ export function isAtsDomain(domain: string): boolean {
 
 const matchesAny = (patterns: RegExp[], text: string) => patterns.some((p) => p.test(text));
 
-/** Cheap check for whether an email is worth sending to the classifier. */
+/** Settles the clear cases without a model: mail that is certainly worth classifying, and mail that certainly isn't. */
 export function filterEmail(input: FilterInput): FilterResult {
-  if (input.inKnownThread) return { relevant: true, reason: "known_thread" };
+  if (input.inKnownThread) return { verdict: "relevant", reason: "known_thread" };
 
   const sender = input.senderEmail.toLowerCase();
   if (matchesAny(EXCLUDED_SENDERS, sender) || matchesAny(EXCLUDED_SUBJECTS, input.subject)) {
-    return { relevant: false, reason: "excluded" };
+    return { verdict: "excluded" };
   }
 
-  const domain = emailDomain(sender);
-  if (isAtsDomain(domain)) return { relevant: true, reason: "ats_domain" };
-
-  const fromKnownCompany = input.knownCompanies?.some(
-    (company) =>
-      domainMatchesCompany(domain, company) ||
-      (input.senderName !== undefined && companySimilarity(input.senderName, company) > 0),
-  );
-  if (fromKnownCompany) return { relevant: true, reason: "known_company" };
+  if (isAtsDomain(emailDomain(sender))) return { verdict: "relevant", reason: "ats_domain" };
 
   if (matchesAny(SUBJECT_KEYWORDS, input.subject) || (input.body && matchesAny(BODY_KEYWORDS, input.body))) {
-    return { relevant: true, reason: "keyword" };
+    return { verdict: "relevant", reason: "keyword" };
   }
 
-  return { relevant: false, reason: "no_signal" };
+  return { verdict: "unsure" };
 }

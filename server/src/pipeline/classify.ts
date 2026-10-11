@@ -13,7 +13,10 @@ export interface ClassifierInput {
 export interface Classification {
   jobRelated: boolean;
   kind: EmailKind;
+  /** The employer. A tracked company's name when the classifier recognised it as the same organisation. */
   company: string | null;
+  /** The employer as the email names it; differs from `company` only when that was resolved to a tracked one. */
+  companyAsWritten: string | null;
   role: string | null;
   confidence: number;
   /** Verbatim quote from the email supporting `kind`; empty for "other". */
@@ -24,8 +27,13 @@ export interface Classification {
   source: "llm" | "rules";
 }
 
+export interface ClassifyContext {
+  /** Companies already in the tracker, so another name for one of them resolves to it instead of a duplicate. */
+  knownCompanies?: readonly string[];
+}
+
 export interface Classifier {
-  classify(email: ClassifierInput): Promise<Classification>;
+  classify(email: ClassifierInput, context?: ClassifyContext): Promise<Classification>;
 }
 
 /**
@@ -62,6 +70,22 @@ export const rawClassificationSchema = z.object({
     .describe("ISO 8601 date or datetime by which the applicant must act. Null if none is stated."),
   interview_at: z.string().nullable().describe("ISO 8601 datetime of a confirmed interview. Null if none is set."),
 });
+
+/**
+ * The schema for one request. With tracked companies it gains `known_company`, limited to exactly those names,
+ * so the model can say "this is the same employer" but cannot invent one.
+ */
+export function classificationSchema(knownCompanies: readonly string[] = []) {
+  if (knownCompanies.length === 0) return rawClassificationSchema;
+  return rawClassificationSchema.extend({
+    known_company: z
+      .enum(knownCompanies as [string, ...string[]])
+      .nullable()
+      .describe(
+        "The tracked company that is the same employer as `company` under another name. Null if none is, or if unsure.",
+      ),
+  });
+}
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MIN_EVIDENCE_CHARS = 8;
@@ -101,8 +125,9 @@ export function finalizeClassification(
   raw: unknown,
   email: ClassifierInput,
   source: Classification["source"],
+  knownCompanies: readonly string[] = [],
 ): Classification {
-  const parsed = rawClassificationSchema.safeParse(raw);
+  const parsed = classificationSchema(knownCompanies).safeParse(raw);
   if (!parsed.success) {
     throw new ClassifierError("invalid_output", `Output does not match the schema: ${z.prettifyError(parsed.error)}`);
   }
@@ -113,10 +138,14 @@ export function finalizeClassification(
     throw new ClassifierError("invalid_output", `Evidence is not a quote from the email: ${JSON.stringify(data.evidence)}`);
   }
 
+  const companyAsWritten = blankToNull(data.company);
+  const knownCompany = data.job_related && "known_company" in data ? (data.known_company as string | null) : null;
+
   return {
     jobRelated: data.job_related,
     kind,
-    company: blankToNull(data.company),
+    company: knownCompany ?? companyAsWritten,
+    companyAsWritten,
     role: blankToNull(data.role),
     confidence: data.confidence,
     evidence: kind === "other" ? "" : data.evidence.trim(),
@@ -130,12 +159,12 @@ export function finalizeClassification(
 /** Uses `fallback` when `primary` answers with something unusable. Outages and auth errors still propagate. */
 export function withFallback(primary: Classifier, fallback: Classifier): Classifier {
   return {
-    async classify(email) {
+    async classify(email, context) {
       try {
-        return await primary.classify(email);
+        return await primary.classify(email, context);
       } catch (error) {
         if (error instanceof ClassifierError && error.code === "invalid_output") {
-          return fallback.classify(email);
+          return fallback.classify(email, context);
         }
         throw error;
       }

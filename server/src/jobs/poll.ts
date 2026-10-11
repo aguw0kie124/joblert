@@ -4,12 +4,12 @@ import { deriveKey } from "../auth/secrets.ts";
 import { loadConfig, publicUrl, requireConfig } from "../config.ts";
 import { createDb } from "../db/client.ts";
 import { createGmailConnector } from "../gmail/connect.ts";
-import { createClassifier } from "../pipeline/createClassifier.ts";
+import { createClassifier, createTriager } from "../pipeline/createClassifier.ts";
 import { runPoll } from "../pipeline/ingest.ts";
 
 const config = requireConfig(loadConfig(), ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "TOKEN_ENCRYPTION_KEY"]);
 if (!config.GROQ_API_KEY) {
-  console.warn("GROQ_API_KEY is not set: using keyword rules only, so every email goes to the review queue.");
+  console.warn("GROQ_API_KEY is not set: using keyword rules only, so only mail with a clear job signal is read and all of it goes to the review queue.");
 }
 
 const { db, pool } = createDb(config);
@@ -23,6 +23,7 @@ try {
   const results = await runPoll({
     db,
     classifier: createClassifier(config),
+    triager: createTriager(config),
     connect: createGmailConnector({ db, oauth, tokenKey: deriveKey(config.TOKEN_ENCRYPTION_KEY, "refresh-token") }),
     threshold: config.AUTO_APPLY_CONFIDENCE,
     backfillDays: config.BACKFILL_DAYS,

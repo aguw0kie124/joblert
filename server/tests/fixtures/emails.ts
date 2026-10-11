@@ -225,3 +225,147 @@ export const emailFixtures: EmailFixture[] = [
     true,
   ),
 ];
+
+export interface TriageFixture {
+  name: string;
+  email: ClassifierInput;
+  knownCompanies: string[];
+  expected: boolean;
+}
+
+// Mail no filter rule settles. The first group is the noise a tracked company's own domain sends.
+export const triageFixtures: TriageFixture[] = [
+  {
+    name: "triage: card offer from a tracked company",
+    knownCompanies: ["American Express", "IBM"],
+    expected: false,
+    email: {
+      senderName: "American Express",
+      senderEmail: "AmericanExpress@welcome.americanexpress.com",
+      subject: "Sam, you're pre-approved for the Blue Cash Everyday Card",
+      receivedAt: received,
+      text: "Earn a $200 statement credit after you spend $2,000 in purchases on your new Card within the first 6 months. Terms apply. Respond by November 30.",
+    },
+  },
+  {
+    name: "triage: security alert from a tracked company",
+    knownCompanies: ["Google", "Stripe"],
+    expected: false,
+    email: {
+      senderName: "Google",
+      senderEmail: "no-reply@accounts.google.com",
+      subject: "Security alert",
+      receivedAt: received,
+      text: "A new sign-in on Mac. We noticed a new sign-in to your Google Account on a Mac device. If this was you, you don't need to do anything.",
+    },
+  },
+  {
+    name: "triage: product newsletter from a tracked company",
+    knownCompanies: ["IBM"],
+    expected: false,
+    email: {
+      senderName: "IBM",
+      senderEmail: "ibm@email.ibm.com",
+      subject: "What's new in watsonx this month",
+      receivedAt: received,
+      text: "Discover the latest releases, upcoming events and customer stories from IBM. Register for our live session on agentic AI.",
+    },
+  },
+  {
+    name: "triage: personal mail",
+    knownCompanies: ["Stripe"],
+    expected: false,
+    email: {
+      senderName: "Priya",
+      senderEmail: "priya.n@gmail.com",
+      subject: "Saturday?",
+      receivedAt: received,
+      text: "Are you still up for the hike on Saturday? Unfortunately the forecast looks a bit wet, so bring a jacket.",
+    },
+  },
+  {
+    name: "triage: recruiter following up from a tracked company",
+    knownCompanies: ["Stripe"],
+    expected: true,
+    email: {
+      senderName: "Dana Lee",
+      senderEmail: "dana.lee@stripe.com",
+      subject: "Quick chat this week?",
+      receivedAt: received,
+      text: "Hi Sam, I'm a recruiter on the Payments team and I've been reviewing your Backend Engineer application. Do you have 30 minutes on Thursday or Friday to talk?",
+    },
+  },
+  {
+    name: "triage: quiet rejection with a bland subject",
+    knownCompanies: ["Stripe"],
+    expected: true,
+    email: {
+      senderName: "Northwind People Team",
+      senderEmail: "people@northwind.example",
+      subject: "Following up",
+      receivedAt: received,
+      text: "Hi Sam, we appreciate the time you spent with us on the Data Analyst opening. After careful consideration we have chosen to go in a different direction.",
+    },
+  },
+  {
+    name: "triage: take-home sent by an engineer",
+    knownCompanies: [],
+    expected: true,
+    email: {
+      senderName: "Marco Rossi",
+      senderEmail: "marco@lumen-labs.example",
+      subject: "Exercise for you",
+      receivedAt: received,
+      text: "Hi Sam, great talking yesterday. As the next part of our process, attached is a small exercise. Most people spend about three hours on it; please send it back within a week.",
+    },
+  },
+];
+
+export interface AliasFixture {
+  name: string;
+  email: ClassifierInput;
+  knownCompanies: string[];
+  /** The tracked company the email's employer should resolve to; null when it is a different company. */
+  expected: string | null;
+}
+
+const confirmation = (company: string, senderName: string): ClassifierInput => ({
+  senderName,
+  senderEmail: "no-reply@us.greenhouse-mail.io",
+  subject: `Thank you for applying to ${company}`,
+  receivedAt: received,
+  text: `Hi Sam,\n\nThanks for applying to the Analyst role at ${company}. We've received your application and will be in touch if there is a match.`,
+});
+
+export const aliasFixtures: AliasFixture[] = [
+  {
+    name: "alias: abbreviation of a tracked company",
+    knownCompanies: ["Procter & Gamble", "Stripe"],
+    expected: "Procter & Gamble",
+    email: confirmation("P&G", "P&G Careers"),
+  },
+  {
+    name: "alias: legal name of a tracked company",
+    knownCompanies: ["Amex", "Stripe"],
+    expected: "Amex",
+    email: confirmation("American Express Company", "American Express Talent Acquisition"),
+  },
+  {
+    name: "alias: same name, no change needed",
+    knownCompanies: ["Stripe", "Ramp"],
+    expected: "Stripe",
+    email: confirmation("Stripe", "Stripe Recruiting"),
+  },
+  {
+    name: "alias: a different company with a similar name",
+    knownCompanies: ["Meta", "Stripe"],
+    expected: null,
+    email: confirmation("Metabase", "Metabase Recruiting"),
+  },
+  {
+    name: "alias: an unrelated company",
+    knownCompanies: ["Procter & Gamble", "Meta"],
+    expected: null,
+    email: confirmation("Ramp", "Ramp Recruiting"),
+  },
+];

@@ -554,7 +554,7 @@ describe("syncing from the dashboard", () => {
   async function appWithInbox(gmail: FakeGmail | null) {
     const { classifier } = fakeClassifier({ [CONFIRMATION]: result("applied") });
     app = await testApp(db, oauth, {
-      ingest: { classifier, connect: async () => gmail, threshold: 0.85, backfillDays: 90 },
+      ingest: { classifier, triager: null, connect: async () => gmail, threshold: 0.85, backfillDays: 30 },
     });
     return signIn("sam");
   }

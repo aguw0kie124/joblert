@@ -1,7 +1,8 @@
 import { vi } from "vitest";
 import { GmailError, type GmailClient } from "../../src/gmail/client.ts";
 import type { GmailMessage } from "../../src/gmail/parser.ts";
-import type { Classification, Classifier } from "../../src/pipeline/classify.ts";
+import type { Classification, Classifier, ClassifyContext } from "../../src/pipeline/classify.ts";
+import type { TriageItem, Triager } from "../../src/pipeline/triage.ts";
 import type { EmailKind } from "../../src/status.ts";
 import { gmailMessage, textPart } from "./gmail.ts";
 
@@ -62,6 +63,7 @@ export const result = (kind: EmailKind, overrides: Partial<Classification> = {})
   jobRelated: true,
   kind,
   company: "Stripe",
+  companyAsWritten: overrides.company === undefined ? "Stripe" : overrides.company,
   role: "Backend Engineer",
   confidence: 0.95,
   evidence: kind === "other" ? "" : "Body of",
@@ -74,11 +76,20 @@ export const result = (kind: EmailKind, overrides: Partial<Classification> = {})
 
 /** Answers by subject. An Error value is thrown instead of returned. */
 export function fakeClassifier(answers: Record<string, Classification | Error>) {
-  const classify = vi.fn(async (email: { subject: string }) => {
+  const classify = vi.fn(async (email: { subject: string }, _context?: ClassifyContext) => {
     const answer = answers[email.subject];
     if (!answer) throw new Error(`no classification set up for "${email.subject}"`);
     if (answer instanceof Error) throw answer;
     return answer;
   });
   return { classifier: { classify } as Classifier, classify, answers };
+}
+
+/** Calls mail job related when its subject is listed. An Error is thrown for every request instead. */
+export function fakeTriager(jobSubjects: string[] | Error) {
+  const triage = vi.fn(async (items: readonly TriageItem[], _knownCompanies?: readonly string[]) => {
+    if (jobSubjects instanceof Error) throw jobSubjects;
+    return items.map((item) => jobSubjects.includes(item.subject));
+  });
+  return { triager: { triage } as Triager, triage };
 }
