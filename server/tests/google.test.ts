@@ -100,3 +100,17 @@ test("the Gmail scope is matched exactly", () => {
   expect(hasGmailScope("openid email")).toBe(false);
   expect(hasGmailScope(`${GMAIL_SCOPE}.extra`)).toBe(false);
 });
+
+test("revoking posts the token, and treats an already-dead token as done", async () => {
+  const live = setup(new Response("{}", { status: 200 }));
+  await expect(live.oauth.revokeToken("rt")).resolves.toBeUndefined();
+  expect(String(live.fetchMock.mock.calls[0]![0])).toBe("https://oauth2.googleapis.com/revoke");
+  expect(sentBody(live.fetchMock)).toEqual({ token: "rt" });
+
+  await expect(setup(json({ error: "invalid_token" }, 400)).oauth.revokeToken("rt")).resolves.toBeUndefined();
+});
+
+test("a failed revoke is reported", async () => {
+  await expect(setup(json({}, 503)).oauth.revokeToken("rt")).rejects.toMatchObject({ code: "failed" });
+  await expect(setup(new Error("offline")).oauth.revokeToken("rt")).rejects.toMatchObject({ code: "failed" });
+});

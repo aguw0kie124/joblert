@@ -2,6 +2,7 @@ import { z } from "zod";
 
 const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
+const REVOKE_URL = "https://oauth2.googleapis.com/revoke";
 
 export const GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
 const SCOPES = ["openid", "email", GMAIL_SCOPE];
@@ -36,6 +37,8 @@ export interface GoogleOAuth {
   authUrl(state: string): string;
   exchangeCode(code: string): Promise<GoogleSignIn>;
   refreshAccessToken(refreshToken: string): Promise<string>;
+  /** Withdraws the app's access to the account. Revoking an already-dead token is not an error. */
+  revokeToken(refreshToken: string): Promise<void>;
 }
 
 export interface GoogleOAuthOptions {
@@ -141,6 +144,23 @@ export function createGoogleOAuth(options: GoogleOAuthOptions): GoogleOAuth {
     async refreshAccessToken(refreshToken) {
       const tokens = await requestToken({ refresh_token: refreshToken, grant_type: "refresh_token" });
       return tokens.access_token;
+    },
+
+    async revokeToken(refreshToken) {
+      let response: Response;
+      try {
+        response = await fetchImpl(REVOKE_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({ token: refreshToken }),
+        });
+      } catch (error) {
+        throw new GoogleAuthError("failed", "Could not reach Google's revoke endpoint", { cause: error });
+      }
+      // 400 is Google's answer for a token that is already invalid, which is the state we wanted.
+      if (!response.ok && response.status !== 400) {
+        throw new GoogleAuthError("failed", `Google revoke request failed (HTTP ${response.status})`);
+      }
     },
   };
 }
