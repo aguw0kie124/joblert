@@ -5,6 +5,21 @@ export function StatusPill({ status }: { status: Status }) {
   return <span className={`pill pill-${status}`}>{STATUS_LABELS[status]}</span>;
 }
 
+/** The panda mark. Decorative: it always sits beside the name. */
+export function Logo({ size = 24 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden="true">
+      <rect width="32" height="32" rx="9" fill="#8fa98b" />
+      <circle cx="9.3" cy="9.6" r="4.3" fill="#1f1f1f" />
+      <circle cx="22.7" cy="9.6" r="4.3" fill="#1f1f1f" />
+      <circle cx="16" cy="17.6" r="9.6" fill="#fff" />
+      <ellipse cx="12.1" cy="16.6" rx="2.3" ry="3" transform="rotate(-22 12.1 16.6)" fill="#1f1f1f" />
+      <ellipse cx="19.9" cy="16.6" rx="2.3" ry="3" transform="rotate(22 19.9 16.6)" fill="#1f1f1f" />
+      <ellipse cx="16" cy="21.3" rx="1.5" ry="1" fill="#1f1f1f" />
+    </svg>
+  );
+}
+
 function Icon({ children, size = 16, className }: { children: ReactNode; size?: number; className?: string }) {
   return (
     <svg

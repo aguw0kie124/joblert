@@ -14,8 +14,8 @@ function reasonText(item: ReviewItem): { label: string; detail: string } {
         label: "Low confidence",
         detail:
           confidence === null
-            ? "joblert wasn't sure enough about what this email means, so nothing was changed."
-            : `joblert is only ${Math.round(confidence * 100)}% sure what this email means, so nothing was changed.`,
+            ? "Joblert wasn't sure enough about what this email means, so nothing was changed."
+            : `Joblert is only ${Math.round(confidence * 100)}% sure what this email means, so nothing was changed.`,
       };
     case "ambiguous_match":
       return {
@@ -37,7 +37,7 @@ function reasonText(item: ReviewItem): { label: string; detail: string } {
     case "unreadable":
       return {
         label: "Could not be read",
-        detail: "joblert couldn't reliably tell what this email says, so it proposed nothing.",
+        detail: "Joblert couldn't reliably tell what this email says, so it proposed nothing.",
       };
   }
 }
@@ -195,7 +195,7 @@ export function ReviewPage() {
   return (
     <div className="page review">
       <p className="review-intro">
-        Emails joblert wasn&rsquo;t sure about. Nothing here has changed an application yet.
+        Emails Joblert wasn&rsquo;t sure about. Nothing here has changed an application yet.
       </p>
       {items.map((item) => (
         <Item key={item.id} item={item} applications={all.data?.applications ?? []} />
@@ -205,7 +205,7 @@ export function ReviewPage() {
         <div className="empty">
           <div>
             <h2>Nothing to review</h2>
-            <p>Emails joblert is unsure about will show up here.</p>
+            <p>Emails Joblert is unsure about will show up here.</p>
           </div>
         </div>
       )}

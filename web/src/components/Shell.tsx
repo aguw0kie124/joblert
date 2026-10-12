@@ -3,7 +3,7 @@ import { Link, Outlet, useLocation } from "react-router";
 import type { Me } from "../api.ts";
 import { relativeTime, shortDate } from "../format.ts";
 import { useDeleteAccount, useRefreshAfterSync, useReview, useSignOut, useSync, useTick } from "../hooks.ts";
-import { ChevronsIcon, InboxIcon, ListIcon, SyncIcon, WarningIcon } from "./ui.tsx";
+import { ChevronsIcon, InboxIcon, ListIcon, Logo, SyncIcon, WarningIcon } from "./ui.tsx";
 
 function AccountMenu({ me }: { me: Me }) {
   const [open, setOpen] = useState(false);
@@ -12,7 +12,7 @@ function AccountMenu({ me }: { me: Me }) {
 
   const confirmDelete = () => {
     const sure = window.confirm(
-      "Delete your joblert account? Every application and its timeline is removed and Gmail access is revoked. This cannot be undone.",
+      "Delete your Joblert account? Every application and its timeline is removed and Gmail access is revoked. This cannot be undone.",
     );
     if (sure) deleteAccount.mutate();
   };
@@ -70,7 +70,10 @@ export function Shell({ me }: { me: Me }) {
   return (
     <div className="app">
       <nav className="sidebar" aria-label="Main">
-        <div className="wordmark">joblert</div>
+        <div className="wordmark">
+          <Logo size={22} />
+          Joblert
+        </div>
         <Link to="/" className={`nav-item${onReview ? "" : " active"}`} aria-current={onReview ? undefined : "page"}>
           <ListIcon />
           Applications
@@ -97,7 +100,7 @@ export function Shell({ me }: { me: Me }) {
           <div className="banner" role="alert">
             <WarningIcon />
             <p>
-              <strong>Gmail is disconnected.</strong> joblert can&rsquo;t read new mail
+              <strong>Gmail is disconnected.</strong> Joblert can&rsquo;t read new mail
               {me.lastSyncAt ? `, so statuses have not updated since ${shortDate(me.lastSyncAt)}.` : "."}
             </p>
             <a className="btn btn-dark" href="/auth/google">

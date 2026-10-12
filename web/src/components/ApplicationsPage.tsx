@@ -83,7 +83,7 @@ export function ApplicationsPage() {
           <div>
             <h2>No applications yet</h2>
             <p>
-              New application emails will appear here on their own. joblert only reads mail that arrives from now on,
+              New application emails will appear here on their own. Joblert only reads mail that arrives from now on,
               so add anything you applied to earlier by hand.
             </p>
           </div>
