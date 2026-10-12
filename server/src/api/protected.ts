@@ -9,6 +9,7 @@ import { accountRoutes } from "./routes/account.ts";
 import { applicationRoutes } from "./routes/applications.ts";
 import { eventRoutes } from "./routes/events.ts";
 import { reviewRoutes } from "./routes/review.ts";
+import { statsRoutes } from "./routes/stats.ts";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -64,5 +65,6 @@ export async function protectedRoutes(app: FastifyInstance, options: ProtectedOp
   await app.register(applicationRoutes, options);
   await app.register(reviewRoutes, options);
   await app.register(eventRoutes, options);
+  await app.register(statsRoutes, options);
   await app.register(accountRoutes, options);
 }

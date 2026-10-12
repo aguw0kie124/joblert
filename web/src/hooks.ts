@@ -8,6 +8,7 @@ const keys = {
   applications: ["applications"] as const,
   application: (id: string) => ["application", id] as const,
   review: ["review"] as const,
+  flow: ["flow"] as const,
 };
 
 /** The signed-in user. Polled, faster while a sync runs, so mail synced in the background shows up. */
@@ -31,6 +32,8 @@ export const useApplication = (id: string) =>
 
 export const useReview = () => useQuery({ queryKey: keys.review, queryFn: api.review });
 
+export const useFlow = () => useQuery({ queryKey: keys.flow, queryFn: api.flow });
+
 /** Refetches everything a sync or an edit can change. */
 function useRefreshData() {
   const client = useQueryClient();
@@ -39,6 +42,7 @@ function useRefreshData() {
       client.invalidateQueries({ queryKey: keys.applications }),
       client.invalidateQueries({ queryKey: ["application"] }),
       client.invalidateQueries({ queryKey: keys.review }),
+      client.invalidateQueries({ queryKey: keys.flow }),
     ]);
 }
 

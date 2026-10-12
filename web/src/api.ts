@@ -1,4 +1,4 @@
-import type { EmailKind, ReviewReason, ReviewResolution, Source, Status } from "@tracker/server/status";
+import type { EmailKind, FlowNode, ReviewReason, ReviewResolution, Source, Status } from "@tracker/server/status";
 
 // Shapes of the JSON the server returns (see server/API.md). Dates arrive as ISO strings.
 
@@ -59,6 +59,13 @@ export interface ReviewItem {
   candidates: Candidate[];
 }
 
+/** How many applications went from one stage to the next. */
+export interface FlowLink {
+  from: FlowNode;
+  to: FlowNode;
+  count: number;
+}
+
 /** The fields a person can set on an application. */
 export interface ApplicationInput {
   company: string;
@@ -117,6 +124,7 @@ export const api = {
   updateApplication: (id: string, patch: Partial<ApplicationInput>) =>
     request<{ application: Application }>("PATCH", `/api/applications/${id}`, patch),
   deleteApplication: (id: string) => request<void>("DELETE", `/api/applications/${id}`),
+  flow: () => request<{ total: number; links: FlowLink[] }>("GET", "/api/stats/flow"),
   revertEvent: (id: string) => request<{ applicationId: string; status: Status }>("POST", `/api/events/${id}/revert`),
 
   review: () => request<{ items: ReviewItem[] }>("GET", "/api/review"),

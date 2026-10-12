@@ -15,6 +15,9 @@ export const STATUS_LABELS: Record<Status, string> = {
 export const EMAIL_KINDS = [...STATUSES, "other"] as const;
 export type EmailKind = (typeof EMAIL_KINDS)[number];
 
+// A point on the dashboard's flow chart: a status, or "waiting" for an application nobody has answered yet.
+export type FlowNode = Status | "waiting";
+
 export const SOURCES = ["email", "manual"] as const;
 export type Source = (typeof SOURCES)[number];
 

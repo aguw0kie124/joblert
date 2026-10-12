@@ -51,6 +51,11 @@ export const InboxIcon = (p: IconProps) => (
     <path d="M2 9.5 3.6 3.5h8.8L14 9.5v3H2v-3Zm0 0h3.5l.8 1.5h3.4l.8-1.5H14" />
   </Icon>
 );
+export const ChartIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M3 13V9M8 13V3M13 13V6.5" />
+  </Icon>
+);
 export const SyncIcon = (p: IconProps) => (
   <Icon {...p}>
     <path d="M13 8a5 5 0 0 1-8.9 3.1M3 8a5 5 0 0 1 8.9-3.1M12 2.5v2.6H9.4M4 13.5v-2.6h2.6" />

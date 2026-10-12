@@ -556,6 +556,113 @@ select.pill {
   color: var(--muted);
 }
 
+/* Insights: headline counts and the flow chart */
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 12px;
+  margin: 0 0 32px;
+}
+
+.stat {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.stat dt {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.stat dd {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 4px 0 0;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.stat-note {
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0;
+  color: var(--muted);
+}
+
+.section-title {
+  margin-bottom: 16px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.flow-wrap {
+  min-height: 340px;
+}
+
+.flow {
+  display: block;
+  --flow-applied: #6f9fd0;
+  --flow-oa: #9a7fcb;
+  --flow-interview: #e0a94a;
+  --flow-offer: #6fb583;
+  --flow-rejected: #d98080;
+  --flow-waiting: #bcbcb7;
+}
+
+.flow-applied {
+  --flow: var(--flow-applied);
+}
+
+.flow-oa {
+  --flow: var(--flow-oa);
+}
+
+.flow-interview {
+  --flow: var(--flow-interview);
+}
+
+.flow-offer {
+  --flow: var(--flow-offer);
+}
+
+.flow-rejected {
+  --flow: var(--flow-rejected);
+}
+
+.flow-waiting {
+  --flow: var(--flow-waiting);
+}
+
+.flow-node {
+  fill: var(--flow);
+}
+
+.flow-link {
+  fill: none;
+  stroke: var(--flow);
+  stroke-opacity: 0.32;
+}
+
+.flow-link:hover {
+  stroke-opacity: 0.55;
+}
+
+.flow-label {
+  font-size: 12px;
+  font-weight: 500;
+  fill: var(--text);
+}
+
+.flow-count {
+  font-weight: 400;
+  fill: var(--muted);
+}
+
 /* Side panel: application detail and the add form */
 
 .panel {

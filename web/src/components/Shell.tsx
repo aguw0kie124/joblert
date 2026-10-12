@@ -3,7 +3,7 @@ import { Link, Outlet, useLocation } from "react-router";
 import type { Me } from "../api.ts";
 import { relativeTime, shortDate } from "../format.ts";
 import { useDeleteAccount, useRefreshAfterSync, useReview, useSignOut, useSync, useTick } from "../hooks.ts";
-import { ChevronsIcon, InboxIcon, ListIcon, Logo, SyncIcon, WarningIcon } from "./ui.tsx";
+import { ChartIcon, ChevronsIcon, InboxIcon, ListIcon, Logo, SyncIcon, WarningIcon } from "./ui.tsx";
 
 function AccountMenu({ me }: { me: Me }) {
   const [open, setOpen] = useState(false);
@@ -51,6 +51,12 @@ function AccountMenu({ me }: { me: Me }) {
   );
 }
 
+const SECTIONS = [
+  { path: "/", label: "Applications", icon: ListIcon },
+  { path: "/review", label: "Review", icon: InboxIcon },
+  { path: "/insights", label: "Insights", icon: ChartIcon },
+];
+
 function syncStatus(me: Me, syncing: boolean): string {
   if (syncing) return "Checking Gmail for new mail…";
   if (!me.lastSyncAt) return me.gmailConnected ? "Not synced yet" : "Never synced";
@@ -63,7 +69,9 @@ export function Shell({ me }: { me: Me }) {
   useTick();
   const review = useReview();
   const sync = useSync();
-  const onReview = useLocation().pathname.startsWith("/review");
+  const { pathname } = useLocation();
+  // Applications owns every path the other sections don't, including an application's own page.
+  const current = SECTIONS.find((s) => s.path !== "/" && pathname.startsWith(s.path)) ?? SECTIONS[0]!;
   const syncing = me.gmailConnected && (me.syncing || sync.isPending);
   const openItems = review.data?.items.length ?? 0;
 
@@ -74,19 +82,18 @@ export function Shell({ me }: { me: Me }) {
           <Logo size={22} />
           Joblert
         </div>
-        <Link to="/" className={`nav-item${onReview ? "" : " active"}`} aria-current={onReview ? undefined : "page"}>
-          <ListIcon />
-          Applications
-        </Link>
-        <Link
-          to="/review"
-          className={`nav-item${onReview ? " active" : ""}`}
-          aria-current={onReview ? "page" : undefined}
-        >
-          <InboxIcon />
-          Review
-          {openItems > 0 && <span className="nav-count">{openItems}</span>}
-        </Link>
+        {SECTIONS.map((section) => (
+          <Link
+            key={section.path}
+            to={section.path}
+            className={`nav-item${section === current ? " active" : ""}`}
+            aria-current={section === current ? "page" : undefined}
+          >
+            <section.icon />
+            {section.label}
+            {section.path === "/review" && openItems > 0 && <span className="nav-count">{openItems}</span>}
+          </Link>
+        ))}
         <AccountMenu me={me} />
       </nav>
 
@@ -109,7 +116,7 @@ export function Shell({ me }: { me: Me }) {
           </div>
         )}
         <header className="topbar">
-          <h1>{onReview ? "Review" : "Applications"}</h1>
+          <h1>{current.label}</h1>
           <div className="topbar-sync">
             <span role="status">{syncStatus(me, syncing)}</span>
             <button

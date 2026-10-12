@@ -14,7 +14,7 @@ export interface TransitionInput {
 }
 
 // Rejected sits outside this order: it can follow any non-final status.
-const STAGE_RANK: Record<Exclude<Status, "rejected">, number> = {
+export const STAGE_RANK: Record<Exclude<Status, "rejected">, number> = {
   applied: 0,
   oa: 1,
   interview: 2,

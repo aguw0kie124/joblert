@@ -2,6 +2,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router";
 import { ApiError } from "./api.ts";
 import { AddPanel, DetailPanel } from "./components/ApplicationPanel.tsx";
 import { ApplicationsPage } from "./components/ApplicationsPage.tsx";
+import { InsightsPage } from "./components/InsightsPage.tsx";
 import { Landing } from "./components/Landing.tsx";
 import { ReviewPage } from "./components/ReviewPage.tsx";
 import { Shell } from "./components/Shell.tsx";
@@ -33,6 +34,7 @@ export function App() {
             <Route path="applications/:id" element={<DetailPanel />} />
           </Route>
           <Route path="review" element={<ReviewPage />} />
+          <Route path="insights" element={<InsightsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>

@@ -68,6 +68,12 @@ Errors: `400` `status_required` or `company_required`, `404` `application_not_fo
 |---|---|
 | `POST /api/events/:id/revert` | Restores the status the event replaced. Returns `{ applicationId, status }`. Only the newest change on an application can be undone. `409` `already_reverted`, `not_a_status_change`, `nothing_to_restore` or `not_latest_change` |
 
+## Stats
+
+| Route | Description |
+|---|---|
+| `GET /api/stats/flow` | `{ total, links }` for the Insights chart. `total` is the number of applications; each link is `{ from, to, count }`, the applications that went from one stage to the next. Stages are the statuses plus `waiting` (still at `applied`, no reply yet). Every application starts at `applied`, and reverted changes are left out |
+
 ## Deploy
 
 One Render web service (`render.yaml`) on the free plan, with the database on Supabase.

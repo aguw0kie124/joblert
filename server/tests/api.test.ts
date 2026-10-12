@@ -105,6 +105,7 @@ describe("every data route needs a session", () => {
     ["GET", "/api/review"],
     ["POST", `/api/review/${MISSING}/resolve`],
     ["POST", `/api/events/${MISSING}/revert`],
+    ["GET", "/api/stats/flow"],
     ["POST", "/api/sync"],
     ["DELETE", "/api/me"],
   ])("%s %s", async (method, url) => {
@@ -463,6 +464,52 @@ describe("review queue", () => {
     expect((await application(theirApplication.id))!.status).toBe("applied");
     expect((await reviewRow(theirs.item.id))!.resolvedAt).toBeNull();
     expect((await reviewRow(mine.item.id))!.resolvedAt).toBeNull();
+  });
+});
+
+describe("flow stats", () => {
+  const flow = async (who: { cookie: string }) => (await call(who, "GET", "/api/stats/flow")).json();
+  const setStatus = (who: { cookie: string }, id: string, status: Status) =>
+    call(who, "PATCH", `/api/applications/${id}`, { status });
+  const add = async (who: { cookie: string }, company: string): Promise<string> =>
+    (await call(who, "POST", "/api/applications", { company })).json().application.id;
+
+  test("nothing tracked is an empty chart", async () => {
+    expect(await flow(sam)).toEqual({ total: 0, links: [] });
+  });
+
+  test("links follow each application's status changes", async () => {
+    await add(sam, "Stripe");
+    const figma = await add(sam, "Figma");
+    await setStatus(sam, figma, "oa");
+    await setStatus(sam, figma, "rejected");
+
+    expect(await flow(sam)).toEqual({
+      total: 2,
+      links: [
+        { from: "applied", to: "oa", count: 1 },
+        { from: "applied", to: "waiting", count: 1 },
+        { from: "oa", to: "rejected", count: 1 },
+      ],
+    });
+  });
+
+  test("an undone change is left out", async () => {
+    const stripe = await add(sam, "Stripe");
+    await setStatus(sam, stripe, "interview");
+    await setStatus(sam, stripe, "rejected");
+    const rejection = (await eventsFor(stripe)).at(-1)!;
+    expect((await call(sam, "POST", `/api/events/${rejection.id}/revert`)).statusCode).toBe(200);
+
+    expect((await flow(sam)).links).toEqual([{ from: "applied", to: "interview", count: 1 }]);
+  });
+
+  test("another user's applications are never counted", async () => {
+    const theirs = await add(alex, "Alex Only");
+    await setStatus(alex, theirs, "offer");
+    await add(sam, "Stripe");
+
+    expect(await flow(sam)).toEqual({ total: 1, links: [{ from: "applied", to: "waiting", count: 1 }] });
   });
 });
 
