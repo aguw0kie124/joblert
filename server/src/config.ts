@@ -35,8 +35,13 @@ const envSchema = z.object({
 export type Config = z.infer<typeof envSchema>;
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  // Treat blank values (as in .env.example) as unset.
-  const cleaned = Object.fromEntries(Object.entries(env).filter(([, v]) => v !== ""));
+  // Values pasted into a hosting dashboard often carry a stray space or line break, which breaks secrets silently.
+  // Blank values (as in .env.example) count as unset.
+  const cleaned = Object.fromEntries(
+    Object.entries(env)
+      .map(([key, value]) => [key, value?.trim()])
+      .filter(([, value]) => value !== ""),
+  );
   const parsed = envSchema.safeParse(cleaned);
   if (!parsed.success) {
     throw new Error(`Invalid environment:\n${z.prettifyError(parsed.error)}`);
