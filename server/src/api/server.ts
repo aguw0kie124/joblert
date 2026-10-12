@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { createGoogleOAuth } from "../auth/google.ts";
@@ -49,6 +50,14 @@ const app = await buildApp({
 app.addHook("onClose", async () => {
   await pool.end();
 });
+
+// Lets a deployed credential be compared with a local one without revealing either.
+const fingerprint = (value: string) =>
+  `${value.length} chars, sha256 ${createHash("sha256").update(value).digest("hex").slice(0, 8)}`;
+app.log.info(
+  { clientId: fingerprint(config.GOOGLE_CLIENT_ID), clientSecret: fingerprint(config.GOOGLE_CLIENT_SECRET) },
+  "Google credentials in use",
+);
 
 await app.listen({ port: config.PORT, host: "0.0.0.0" });
 app.syncRunner.startTimer();
