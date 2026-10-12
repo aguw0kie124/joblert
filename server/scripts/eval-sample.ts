@@ -70,7 +70,12 @@ try {
         unparsed++;
         continue;
       }
-      const { verdict } = filterEmail({ senderEmail: email.senderEmail, subject: email.subject, body: email.text });
+      const { verdict } = filterEmail({
+        senderEmail: email.senderEmail,
+        senderName: email.senderName,
+        subject: email.subject,
+        body: email.text,
+      });
       byRule[verdict].push({ ...email, receivedAt: email.receivedAt.toISOString(), rule: verdict });
     }
     if (i % 100 === 0 && i > 0) console.log(`  ${i} of ${ids.length}`);

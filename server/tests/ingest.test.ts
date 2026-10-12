@@ -93,15 +93,31 @@ describe("a sync", () => {
     expect(await rows.cursor()).toMatchObject({ userId, historyId: "4242", lastRunAt: NOW });
   });
 
-  test("mail the triage turns away is neither classified nor stored", async () => {
+  test("mail with no hint of a job is dropped without asking a model, and counted", async () => {
     gmail.add(mail("m1", "Lunch on Friday?", day(1), { from: "Alex <alex@example.com>" }));
     const { classifier, classify } = fakeClassifier({});
+    const { triager, triage } = fakeTriager([]);
 
-    const stats = await pollUser(deps(classifier), userId, gmail);
+    const stats = await pollUser(deps(classifier, { triager }), userId, gmail);
 
-    expect(stats).toMatchObject({ fetched: 1, relevant: 0 });
+    expect(stats).toMatchObject({ fetched: 1, relevant: 0, unrelated: 1 });
+    expect(triage).not.toHaveBeenCalled();
     expect(classify).not.toHaveBeenCalled();
     expect(await rows.emails()).toEqual([]);
+  });
+
+  test("mail from a tracked company goes to the triage even with no hint of a job", async () => {
+    gmail.add(mail("m1", CONFIRMATION, day(1)));
+    const { classifier } = fakeClassifier({ [CONFIRMATION]: result("applied") });
+    const { triager, triage } = fakeTriager([]);
+    await pollUser(deps(classifier, { triager }), userId, gmail);
+
+    gmail.add(mail("m2", "Quick chat?", day(3), { from: "Jane <jane@stripe.com>" }));
+    gmail.history = ["m2"];
+    const stats = await pollUser(deps(classifier, { triager }), userId, gmail);
+
+    expect(triage).toHaveBeenCalledTimes(1);
+    expect(stats).toMatchObject({ fetched: 1, relevant: 0, unrelated: 0 });
   });
 
   test("the user's own sent mail is skipped", async () => {
@@ -368,7 +384,8 @@ describe("emails with no application to attach to", () => {
 });
 
 describe("mail no rule settles", () => {
-  const from = { from: "Dana Lee <dana@stripe.com>" };
+  // A recruiting address hints at a job; the subjects below settle nothing.
+  const from = { from: "Dana Lee <dana@recruiting.stripe.com>" };
   const CHAT = "Following up on our conversation";
   const CARD = "Your statement is ready";
   const LUNCH = "Lunch on Friday?";
@@ -382,9 +399,9 @@ describe("mail no rule settles", () => {
 
     expect(triage).toHaveBeenCalledTimes(1);
     expect(triage.mock.calls[0]![0]).toEqual([
-      { senderName: "Dana Lee", senderEmail: "dana@stripe.com", subject: CHAT, snippet: `Body of: ${CHAT}` },
-      { senderName: "Dana Lee", senderEmail: "dana@stripe.com", subject: CARD, snippet: `Body of: ${CARD}` },
-      { senderName: "Dana Lee", senderEmail: "dana@stripe.com", subject: LUNCH, snippet: `Body of: ${LUNCH}` },
+      { senderName: "Dana Lee", senderEmail: "dana@recruiting.stripe.com", subject: CHAT, snippet: `Body of: ${CHAT}` },
+      { senderName: "Dana Lee", senderEmail: "dana@recruiting.stripe.com", subject: CARD, snippet: `Body of: ${CARD}` },
+      { senderName: "Dana Lee", senderEmail: "dana@recruiting.stripe.com", subject: LUNCH, snippet: `Body of: ${LUNCH}` },
     ]);
     expect(classify).toHaveBeenCalledTimes(1);
     expect(stats).toMatchObject({ fetched: 3, relevant: 1, created: 1 });

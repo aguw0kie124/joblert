@@ -28,6 +28,8 @@ export interface PollStats {
   recorded: number;
   review: number;
   ignored: number;
+  /** Messages dropped by rule because nothing about them hinted at a job. Never sent to a model. */
+  unrelated: number;
   /** Messages that could not be parsed. */
   failed: number;
 }
@@ -134,6 +136,7 @@ const emptyStats = (): PollStats => ({
   recorded: 0,
   review: 0,
   ignored: 0,
+  unrelated: 0,
   failed: 0,
 });
 
@@ -258,6 +261,7 @@ class UserPoll {
   private async processWindow(messages: readonly GmailMessage[]) {
     const candidates: ParsedEmail[] = [];
     const unsure: ParsedEmail[] = [];
+    const trackedCompanies = this.knownCompanies();
 
     for (const message of messages) {
       let email: ParsedEmail;
@@ -271,12 +275,15 @@ class UserPoll {
 
       const filter = filterEmail({
         senderEmail: email.senderEmail,
+        senderName: email.senderName,
         subject: email.subject,
         body: email.text,
         inKnownThread: this.known.some((a) => a.threadIds.includes(email.threadId)),
+        trackedCompanies,
       });
       if (filter.verdict === "relevant") candidates.push(email);
       else if (filter.verdict === "unsure") unsure.push(email);
+      else if (filter.reason === "no_signal") this.stats.unrelated++;
     }
 
     candidates.push(...(await this.triage(unsure)));
