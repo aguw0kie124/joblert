@@ -17,8 +17,9 @@ import { SNIPPET_CHARS } from "../src/pipeline/triage.ts";
 import { EVAL_DIR, LABELS_FILE, SAMPLE_FILE, toCsv, type Rule, type Sample, type SampleEmail } from "./evalFiles.ts";
 
 // How many emails of each rule verdict are sampled, at random. Most mail is "unsure", so it is sampled rather
-// than taken whole; a few rule-dropped emails are included to catch job mail the rules lose.
-const SAMPLE_SIZE: Record<Rule, number> = { relevant: 100, unsure: 100, excluded: 30 };
+// than taken whole. The rules drop most mail outright, so as many dropped emails are sampled, to catch job
+// mail the rules lose.
+const SAMPLE_SIZE: Record<Rule, number> = { relevant: 100, unsure: 130, excluded: 130 };
 const FETCH_CONCURRENCY = 5;
 
 const args = process.argv.slice(2);

@@ -1,6 +1,7 @@
 // Scores the pipeline (rules, triage, classifier) on the hand-labelled inbox sample from eval:sample.
 // Answers are saved as they arrive, so a run stopped by Groq's limits continues where it left off.
-// Usage: npm run eval:inbox -w server -- [--fresh]
+// Usage: npm run eval:inbox -w server -- [--fresh] [--answered]
+// --answered scores only the emails a stopped run already has answers for, and calls Groq for nothing.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { loadConfig, requireConfig } from "../src/config.ts";
 import { ClassifierError } from "../src/pipeline/classify.ts";
@@ -18,7 +19,8 @@ interface Result {
 
 interface Label {
   job: boolean;
-  stage: EmailKind | null;
+  /** The stages that count as right. More than one when the email fairly reads either way ("applied|other"). */
+  stages: EmailKind[];
 }
 
 const RETRY_WAIT_MS = 60_000;
@@ -52,11 +54,11 @@ function readLabels(): Map<string, Label> {
     const isJob = ["y", "yes", "true", "1"].includes(answer);
     if (!isJob && !["n", "no", "false", "0"].includes(answer)) throw new Error(`job must be y or n, got "${row[job]}"`);
 
-    const named = row[stage]?.trim().toLowerCase() ?? "";
-    if (named && !(EMAIL_KINDS as readonly string[]).includes(named)) {
-      throw new Error(`stage must be one of ${EMAIL_KINDS.join(", ")}; got "${row[stage]}"`);
+    const named = (row[stage]?.trim().toLowerCase() || "other").split("|").map((s) => s.trim());
+    if (named.some((s) => !(EMAIL_KINDS as readonly string[]).includes(s))) {
+      throw new Error(`stage must be one of ${EMAIL_KINDS.join(", ")}, or two joined by "|"; got "${row[stage]}"`);
     }
-    labels.set(row[id]!.trim(), { job: isJob, stage: isJob ? ((named || "other") as EmailKind) : null });
+    labels.set(row[id]!.trim(), { job: isJob, stages: isJob ? (named as EmailKind[]) : [] });
   }
   return labels;
 }
@@ -79,13 +81,24 @@ async function patiently<T>(request: () => Promise<T>): Promise<T> {
   }
 }
 
+/** Whether the saved results already say what the pipeline does with this email. */
+function answered(email: SampleEmail): boolean {
+  const result = results[email.gmailMessageId];
+  if (email.rule === "excluded") return true;
+  if (email.rule === "unsure" && result?.triaged === false) return true;
+  return (email.rule === "relevant" || result?.triaged === true) && result?.classified !== undefined;
+}
+
 const labels = readLabels();
+const answeredOnly = process.argv.includes("--answered");
 // Oldest first in windows, as a sync reads them.
 const emails = sample.emails
-  .filter((e) => labels.has(e.gmailMessageId))
+  .filter((e) => labels.has(e.gmailMessageId) && (!answeredOnly || answered(e)))
   .sort((a, b) => a.receivedAt.localeCompare(b.receivedAt));
 if (emails.length === 0) throw new Error("No labelled rows: fill in the job column of labels.csv");
-console.log(`${emails.length} of ${sample.emails.length} sampled emails are labelled. Model: ${groq.model}`);
+console.log(
+  `${emails.length} of ${sample.emails.length} sampled emails are labelled${answeredOnly ? " and answered" : ""}. Model: ${groq.model}`,
+);
 
 for (let start = 0; start < emails.length; start += TRIAGE_BATCH) {
   const window = emails.slice(start, start + TRIAGE_BATCH);
@@ -184,10 +197,10 @@ for (const email of emails) {
 
   if (label.job && classified?.kind) {
     stageTotal++;
-    if (classified.kind === label.stage) stageRight++;
-    else misses.push(`${describe(email)}\n    stage: labelled ${label.stage}, read as ${classified.kind} at ${classified.confidence}`);
+    if (label.stages.includes(classified.kind)) stageRight++;
+    else misses.push(`${describe(email)}\n    stage: labelled ${label.stages.join("|")}, read as ${classified.kind} at ${classified.confidence}`);
   }
-  const wrong = kept !== label.job || (label.job && classified?.kind != null && classified.kind !== label.stage);
+  const wrong = kept !== label.job || (label.job && classified?.kind != null && !label.stages.includes(classified.kind));
   if (wrong && classified && classified.confidence >= config.AUTO_APPLY_CONFIDENCE) confidentWrong++;
 }
 
