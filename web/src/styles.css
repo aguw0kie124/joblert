@@ -1,4 +1,7 @@
 :root {
+  --bg: #fff;
+  --surface: #fff;
+  --on-text: #fff;
   --text: #1f1f1f;
   --text-2: #4a4a47;
   --muted: #6b6b68;
@@ -10,9 +13,91 @@
   --active: #efefed;
   --sidebar: #fbfbfa;
   --dark-hover: #3a3a38;
+  --avatar: #e6e6e3;
   --sage: #8fa98b;
   --sage-tint: #e2eadf;
   --sage-deep: #46614a;
+  --sage-line: #b9c6b5;
+  --pill-applied-bg: #e3edf8;
+  --pill-applied: #1d4f80;
+  --pill-oa-bg: #ece5f7;
+  --pill-oa: #553688;
+  --pill-interview-bg: #fbecd0;
+  --pill-interview: #734700;
+  --pill-offer-bg: #dcf0e0;
+  --pill-offer: #1e5c31;
+  --pill-rejected-bg: #f8e1e1;
+  --pill-rejected: #8a2a2a;
+  color-scheme: light;
+}
+
+/* Dark: follows the system unless the account menu picked a theme (data-theme on <html>). */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #191919;
+    --surface: #222221;
+    --on-text: #191919;
+    --text: #ececea;
+    --text-2: #c4c4c0;
+    --muted: #9b9b97;
+    --faint: #85857f;
+    --line: #2e2e2c;
+    --line-soft: #282827;
+    --line-strong: #383836;
+    --hover: #262625;
+    --active: #2c2c2a;
+    --sidebar: #1e1e1d;
+    --dark-hover: #cfcfcb;
+    --avatar: #383836;
+    --sage: #8fa98b;
+    --sage-tint: #29342a;
+    --sage-deep: #a9c2a5;
+    --sage-line: #44513f;
+    --pill-applied-bg: #1f2f40;
+    --pill-applied: #9cc3ea;
+    --pill-oa-bg: #2d2540;
+    --pill-oa: #c5b2ea;
+    --pill-interview-bg: #3a2d14;
+    --pill-interview: #edc27a;
+    --pill-offer-bg: #1f3424;
+    --pill-offer: #93d1a3;
+    --pill-rejected-bg: #3d2222;
+    --pill-rejected: #eca3a3;
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #191919;
+  --surface: #222221;
+  --on-text: #191919;
+  --text: #ececea;
+  --text-2: #c4c4c0;
+  --muted: #9b9b97;
+  --faint: #85857f;
+  --line: #2e2e2c;
+  --line-soft: #282827;
+  --line-strong: #383836;
+  --hover: #262625;
+  --active: #2c2c2a;
+  --sidebar: #1e1e1d;
+  --dark-hover: #cfcfcb;
+  --avatar: #383836;
+  --sage: #8fa98b;
+  --sage-tint: #29342a;
+  --sage-deep: #a9c2a5;
+  --sage-line: #44513f;
+  --pill-applied-bg: #1f2f40;
+  --pill-applied: #9cc3ea;
+  --pill-oa-bg: #2d2540;
+  --pill-oa: #c5b2ea;
+  --pill-interview-bg: #3a2d14;
+  --pill-interview: #edc27a;
+  --pill-offer-bg: #1f3424;
+  --pill-offer: #93d1a3;
+  --pill-rejected-bg: #3d2222;
+  --pill-rejected: #eca3a3;
+  color-scheme: dark;
 }
 
 * {
@@ -21,7 +106,7 @@
 
 body {
   margin: 0;
-  background: #fff;
+  background: var(--bg);
   color: var(--text);
   font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
   font-size: 14px;
@@ -75,7 +160,7 @@ p {
   padding: 0 12px;
   border: 1px solid var(--line-strong);
   border-radius: 6px;
-  background: #fff;
+  background: var(--surface);
   font-size: 13px;
   font-weight: 500;
   white-space: nowrap;
@@ -89,7 +174,7 @@ p {
 .btn-dark {
   border-color: var(--text);
   background: var(--text);
-  color: #fff;
+  color: var(--on-text);
 }
 
 .btn-dark:hover {
@@ -111,7 +196,7 @@ p {
 
 .btn:disabled {
   border-color: var(--line);
-  background: #fff;
+  background: var(--surface);
   color: var(--faint);
   cursor: not-allowed;
 }
@@ -151,28 +236,28 @@ p {
 }
 
 .pill-applied {
-  background: #e3edf8;
-  color: #1d4f80;
+  background: var(--pill-applied-bg);
+  color: var(--pill-applied);
 }
 
 .pill-oa {
-  background: #ece5f7;
-  color: #553688;
+  background: var(--pill-oa-bg);
+  color: var(--pill-oa);
 }
 
 .pill-interview {
-  background: #fbecd0;
-  color: #734700;
+  background: var(--pill-interview-bg);
+  color: var(--pill-interview);
 }
 
 .pill-offer {
-  background: #dcf0e0;
-  color: #1e5c31;
+  background: var(--pill-offer-bg);
+  color: var(--pill-offer);
 }
 
 .pill-rejected {
-  background: #f8e1e1;
-  color: #8a2a2a;
+  background: var(--pill-rejected-bg);
+  color: var(--pill-rejected);
 }
 
 .pill-none {
@@ -283,7 +368,7 @@ select.pill {
   justify-content: center;
   height: 24px;
   border-radius: 12px;
-  background: #e6e6e3;
+  background: var(--avatar);
   font-size: 12px;
   font-weight: 600;
   text-transform: uppercase;
@@ -307,7 +392,7 @@ select.pill {
   padding: 4px;
   border: 1px solid var(--line-strong);
   border-radius: 8px;
-  background: #fff;
+  background: var(--surface);
 }
 
 .menu button {
@@ -676,7 +761,7 @@ select.pill {
   width: 560px;
   max-width: 100%;
   overflow-y: auto;
-  background: #fff;
+  background: var(--surface);
   border-left: 1px solid var(--line-strong);
   animation: panel-in 0.16s ease-out;
 }
@@ -1056,7 +1141,7 @@ select.input {
   padding: 0 22px;
   border-radius: 999px;
   background: var(--text);
-  color: #fff;
+  color: var(--on-text);
   font-size: 15px;
   font-weight: 600;
   white-space: nowrap;
@@ -1065,7 +1150,7 @@ select.input {
 .lp-nav-actions > a.lp-btn:hover,
 .lp-btn:hover {
   background: var(--dark-hover);
-  color: #fff;
+  color: var(--on-text);
   text-decoration: none;
 }
 
@@ -1135,7 +1220,7 @@ select.input {
   border-right: 0;
   border-bottom: 0;
   border-radius: 18px 0 0 0;
-  background: #fff;
+  background: var(--surface);
   overflow: hidden;
 }
 
@@ -1182,7 +1267,7 @@ select.input {
   height: 44px;
   border-radius: 10px;
   background: var(--text);
-  color: #fff;
+  color: var(--on-text);
   font-size: 18px;
   font-weight: 700;
 }
@@ -1204,8 +1289,8 @@ select.input {
 .lp-mail-body mark {
   padding: 1px 2px;
   border-radius: 3px;
-  background: #fbecd0;
-  color: #734700;
+  background: var(--pill-interview-bg);
+  color: var(--pill-interview);
 }
 
 .lp-row {
@@ -1247,7 +1332,7 @@ select.input {
   padding: 10px 20px;
   border-radius: 999px;
   background: var(--text);
-  color: #fff;
+  color: var(--on-text);
   font-size: 14px;
   font-weight: 500;
   white-space: nowrap;
@@ -1318,7 +1403,7 @@ select.input {
 
 .lp-facts > div {
   padding: 20px 0;
-  border-bottom: 1px dashed #b9c6b5;
+  border-bottom: 1px dashed var(--sage-line);
 }
 
 .lp-facts > div:first-child {
