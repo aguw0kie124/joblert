@@ -28,7 +28,11 @@ export const useApplications = (filter: { status?: Status; q?: string } = {}) =>
   });
 
 export const useApplication = (id: string) =>
-  useQuery({ queryKey: keys.application(id), queryFn: () => api.application(id), retry: false });
+  useQuery({
+    queryKey: keys.application(id),
+    queryFn: () => api.application(id),
+    retry: false,
+  });
 
 export const useReview = () => useQuery({ queryKey: keys.review, queryFn: api.review });
 
@@ -111,12 +115,26 @@ export function useResolveReview() {
 
 export function useSignOut() {
   const client = useQueryClient();
-  return useMutation({ mutationFn: api.logout, onSuccess: () => client.resetQueries() });
+  return useMutation({
+    mutationFn: api.logout,
+    onSuccess: () => client.resetQueries(),
+  });
+}
+
+export function useSaveGroqKey() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: api.saveGroqKey,
+    onSuccess: () => client.invalidateQueries({ queryKey: keys.me }),
+  });
 }
 
 export function useDeleteAccount() {
   const client = useQueryClient();
-  return useMutation({ mutationFn: api.deleteAccount, onSuccess: () => client.resetQueries() });
+  return useMutation({
+    mutationFn: api.deleteAccount,
+    onSuccess: () => client.resetQueries(),
+  });
 }
 
 /** `value`, once it has stopped changing for `delay` ms. */

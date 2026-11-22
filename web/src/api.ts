@@ -8,6 +8,8 @@ export interface Me {
   gmailConnected: boolean;
   lastSyncAt: string | null;
   syncing: boolean;
+  /** Until "ok", the dashboard asks for the user's own Groq key and nothing is synced. */
+  groqKey: "missing" | "invalid" | "ok";
 }
 
 export interface Application {
@@ -109,6 +111,7 @@ export const api = {
   logout: () => request<void>("POST", "/auth/logout"),
   deleteAccount: () => request<void>("DELETE", "/api/me"),
   sync: () => request<{ started: boolean }>("POST", "/api/sync"),
+  saveGroqKey: (key: string) => request<void>("PUT", "/api/groq-key", { key }),
 
   applications: (filter: { status?: Status; q?: string }) => {
     const params = new URLSearchParams();

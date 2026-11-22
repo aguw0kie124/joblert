@@ -5,8 +5,9 @@ import Fastify, { type FastifyInstance } from "fastify";
 import type { GoogleOAuth } from "../auth/google.ts";
 import { deriveKey } from "../auth/secrets.ts";
 import type { Db } from "../db/client.ts";
-import type { IngestDeps } from "../pipeline/ingest.ts";
-import { createSyncRunner, type SyncRunner } from "../pipeline/syncRunner.ts";
+import { loadGroqKey, markGroqKeyInvalid } from "../auth/groqKeys.ts";
+import type { VerifyGroqKey } from "../pipeline/groqClient.ts";
+import { createSyncRunner, type SyncRunner, type SyncRunnerOptions } from "../pipeline/syncRunner.ts";
 import { protectedRoutes } from "./protected.ts";
 import { authRoutes } from "./routes/auth.ts";
 import { webhookRoutes } from "./routes/webhooks.ts";
@@ -33,8 +34,10 @@ export interface AppOptions {
   oauth: GoogleOAuth;
   sessionSecret: string;
   tokenEncryptionKey: string;
-  /** How a sync reads and classifies mail. */
-  ingest: Omit<IngestDeps, "db" | "log">;
+  /** How a sync reads and classifies mail. `models` is built per user from their own Groq key. */
+  ingest: Pick<SyncRunnerOptions, "connect" | "threshold" | "models" | "now">;
+  /** Checks a Groq key before it is saved. */
+  verifyGroqKey: VerifyGroqKey;
   /** Gmail push: the topic Gmail publishes to, and the secret in the URL Pub/Sub posts to. Off when absent. */
   pubsub?: { topic: string; token: string };
   /** Cookies are marked Secure when the app is served over HTTPS. */
@@ -56,7 +59,9 @@ const requestLog = (request: { method: string; url: string }) => ({
 });
 
 export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
-  const app = Fastify({ logger: options.logger ? { serializers: { req: requestLog } } : false });
+  const app = Fastify({
+    logger: options.logger ? { serializers: { req: requestLog } } : false,
+  });
 
   await app.register(secureSession, {
     key: deriveKey(options.sessionSecret, "session-cookie"),
@@ -80,19 +85,40 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     }
   });
 
+  const tokenKey = deriveKey(options.tokenEncryptionKey, "refresh-token");
+  const groqKeyKey = deriveKey(options.tokenEncryptionKey, "groq-key");
   const runner = createSyncRunner({
     ...options.ingest,
     db: options.db,
+    groqKey: (userId) => loadGroqKey(options.db, groqKeyKey, userId),
+    onGroqKeyRejected: (userId) => markGroqKeyInvalid(options.db, userId),
     topic: options.pubsub?.topic,
     log: (message, data) => app.log.info(data ?? {}, message),
   });
   app.decorate("syncRunner", runner);
   app.addHook("onClose", async () => runner.stopTimer());
 
-  const tokenKey = deriveKey(options.tokenEncryptionKey, "refresh-token");
-  await app.register(authRoutes, { db: options.db, oauth: options.oauth, tokenKey, webUrl: options.webUrl, runner });
-  await app.register(protectedRoutes, { db: options.db, oauth: options.oauth, tokenKey, runner });
-  if (options.pubsub) await app.register(webhookRoutes, { db: options.db, runner, token: options.pubsub.token });
+  await app.register(authRoutes, {
+    db: options.db,
+    oauth: options.oauth,
+    tokenKey,
+    webUrl: options.webUrl,
+    runner,
+  });
+  await app.register(protectedRoutes, {
+    db: options.db,
+    oauth: options.oauth,
+    tokenKey,
+    groqKeyKey,
+    verifyGroqKey: options.verifyGroqKey,
+    runner,
+  });
+  if (options.pubsub)
+    await app.register(webhookRoutes, {
+      db: options.db,
+      runner,
+      token: options.pubsub.token,
+    });
 
   if (options.webDir) {
     await app.register(fastifyStatic, { root: options.webDir });

@@ -16,17 +16,18 @@ Statuses: `applied`, `oa`, `interview`, `offer`, `rejected`.
 | `GET /auth/google` | Redirects to Google sign-in |
 | `GET /auth/google/callback` | Google's return URL. Redirects to the web app, with `?auth_error=denied\|gmail_scope\|failed` on failure |
 | `POST /auth/logout` | Ends the session. `204` |
-| `GET /api/me` | `{ id, email, gmailConnected, lastSyncAt, syncing }`. `syncing` is true while a sync of this inbox is running |
+| `GET /api/me` | `{ id, email, gmailConnected, lastSyncAt, syncing, groqKey }`. `syncing` is true while a sync of this inbox is running. `groqKey` is `missing`, `invalid` (Groq rejected it during a sync) or `ok`; nothing is synced until it is `ok` |
+| `PUT /api/groq-key` | `{ key }`: the user's own Groq API key. Checked with Groq first, then stored encrypted; starts the inbox's watch and first sync. `204`. `400` `invalid_groq_key`, `503` `groq_unavailable` |
 | `DELETE /api/me` | Deletes the account and all its data, and revokes Google access. `204` |
-| `POST /api/sync` | Starts a sync in the background: reads mail that arrived since the last one. `202`. `409` `sync_in_progress` or `gmail_disconnected`. Rarely needed: mail is synced as it arrives |
+| `POST /api/sync` | Starts a sync in the background: reads mail that arrived since the last one. `202`. `409` `sync_in_progress`, `gmail_disconnected` or `groq_key_missing`. Rarely needed: mail is synced as it arrives |
 
 ## Sync
 
-An inbox is synced when Gmail reports a change, once an hour as a safety net, on sign-in, and on `POST /api/sync`. Signing in starts Gmail's notifications and marks where the first sync begins; mail already in the inbox is not read.
+An inbox is synced when Gmail reports a change, once an hour as a safety net, on sign-in, and on `POST /api/sync`, but only once the user has saved a working Groq key: every sync reads mail with that user's own key. Saving the key starts Gmail's notifications and marks where the first sync begins; mail already in the inbox is not read.
 
 | Route | Description |
 |---|---|
-| `POST /webhooks/gmail?token=<PUBSUB_TOKEN>` | Where the Pub/Sub push subscription delivers Gmail's notifications. Only exists when `GMAIL_PUBSUB_TOPIC` and `PUBSUB_TOKEN` are set. Syncs the inbox the notification names. `204` when done, already running, or not actionable (unknown address, unreadable body, disconnected inbox). `503` when the sync hit a rate limit or outage, so Pub/Sub delivers it again. `403` on a wrong token |
+| `POST /webhooks/gmail?token=<PUBSUB_TOKEN>` | Where the Pub/Sub push subscription delivers Gmail's notifications. Only exists when `GMAIL_PUBSUB_TOPIC` and `PUBSUB_TOKEN` are set. Syncs the inbox the notification names. `204` when done, already running, or not actionable (unknown address, unreadable body, disconnected inbox, no Groq key). `503` when the sync hit a rate limit or outage, so Pub/Sub delivers it again. `403` on a wrong token |
 
 Google Cloud setup, in the project that holds the OAuth client:
 

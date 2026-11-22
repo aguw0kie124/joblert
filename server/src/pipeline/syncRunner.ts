@@ -9,15 +9,24 @@ import { pollUser, type IngestDeps } from "./ingest.ts";
  * running: a sync was already under way; it will run once more to pick up whatever prompted this one.
  * retry: stopped on something temporary (a rate limit, an outage); the same sync will work later.
  * disconnected: Google no longer accepts the stored token; the user has to sign in again.
+ * no_groq_key: the user has not saved a working Groq key, so nothing is read until they do.
  * failed: stopped on something a retry won't fix.
  */
-export type SyncOutcome = "ok" | "running" | "retry" | "disconnected" | "failed";
+export type SyncOutcome = "ok" | "running" | "retry" | "disconnected" | "no_groq_key" | "failed";
 
 export type SyncStart =
-  | { status: "running" | "disconnected" }
-  | { status: "started"; done: Promise<Exclude<SyncOutcome, "running" | "disconnected">> };
+  | { status: "running" | "disconnected" | "no_groq_key" }
+  | { status: "started"; done: Promise<Exclude<SyncOutcome, "running" | "disconnected" | "no_groq_key">> };
 
-export interface SyncRunnerOptions extends IngestDeps {
+/** The models that read one user's mail, built from that user's own Groq key. */
+export type Models = Pick<IngestDeps, "classifier" | "triager">;
+
+export interface SyncRunnerOptions extends Omit<IngestDeps, "classifier" | "triager"> {
+  /** The user's Groq key, or null when they have none that works. */
+  groqKey: (userId: string) => Promise<string | null>;
+  models: (apiKey: string) => Models;
+  /** Groq rejected the user's key mid-sync. */
+  onGroqKeyRejected: (userId: string) => Promise<void>;
   /** Pub/Sub topic Gmail publishes inbox changes to. Without one there are no push notifications. */
   topic?: string;
   /** How often every connected inbox is refreshed. */
@@ -47,20 +56,25 @@ const HOUR_MS = 60 * 60 * 1000;
 const describe = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 export function createSyncRunner(options: SyncRunnerOptions): SyncRunner {
-  const { topic, intervalMs = HOUR_MS, ...deps } = options;
+  const { topic, intervalMs = HOUR_MS, groqKey, models, onGroqKeyRejected, ...deps } = options;
   const running = new Set<string>();
   // Users whose inbox changed while their sync was running.
   const again = new Set<string>();
   let timer: NodeJS.Timeout | undefined;
   let refreshing = false;
 
-  async function once(userId: string, gmail: GmailClient) {
+  async function once(userId: string, gmail: GmailClient, userModels: Models) {
     try {
-      const stats = await pollUser(deps, userId, gmail);
+      const stats = await pollUser({ ...deps, ...userModels }, userId, gmail);
       deps.log?.("Sync finished", { userId, ...stats });
       return "ok" as const;
     } catch (error) {
       deps.log?.("Sync failed", { userId, error: describe(error) });
+      if (error instanceof ClassifierError && error.code === "auth") {
+        await onGroqKeyRejected(userId).catch((cause) =>
+          deps.log?.("Could not mark the Groq key invalid", { userId, error: describe(cause) }),
+        );
+      }
       if (error instanceof ClassifierError) return error.code === "unavailable" ? ("retry" as const) : ("failed" as const);
       if (error instanceof GmailError) return error.code === "failed" ? ("retry" as const) : ("failed" as const);
       return "failed" as const;
@@ -79,7 +93,14 @@ export function createSyncRunner(options: SyncRunnerOptions): SyncRunner {
     };
 
     let gmail: GmailClient | null;
+    let apiKey: string | null;
     try {
+      // No key, no sync: not even the watch, so Gmail sends nothing for this inbox yet.
+      apiKey = await groqKey(userId);
+      if (!apiKey) {
+        release();
+        return { status: "no_groq_key" };
+      }
       gmail = await deps.connect(userId);
     } catch (error) {
       release();
@@ -92,14 +113,15 @@ export function createSyncRunner(options: SyncRunnerOptions): SyncRunner {
     }
 
     const inbox = gmail;
+    const userModels = models(apiKey);
     const run = async () => {
       if (watch && topic) {
         // A sync still works without the watch; the timer tries again.
         await inbox.watch(topic).catch((error) => deps.log?.("Could not watch the inbox", { userId, error: describe(error) }));
       }
-      let outcome = await once(userId, inbox);
+      let outcome = await once(userId, inbox, userModels);
       // However many notifications arrived meanwhile, one more pass reads everything they announced.
-      while (outcome === "ok" && again.delete(userId)) outcome = await once(userId, inbox);
+      while (outcome === "ok" && again.delete(userId)) outcome = await once(userId, inbox, userModels);
       return outcome;
     };
     return { status: "started", done: run().finally(release) };

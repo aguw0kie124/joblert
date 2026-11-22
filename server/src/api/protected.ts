@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { GoogleOAuth } from "../auth/google.ts";
 import type { Db } from "../db/client.ts";
 import { users } from "../db/schema.ts";
+import type { VerifyGroqKey } from "../pipeline/groqClient.ts";
 import type { SyncRunner } from "../pipeline/syncRunner.ts";
 import { accountRoutes } from "./routes/account.ts";
 import { applicationRoutes } from "./routes/applications.ts";
@@ -22,13 +23,16 @@ export interface ProtectedOptions {
   db: Db;
   oauth: GoogleOAuth;
   tokenKey: Buffer;
+  /** Encrypts users' Groq keys. */
+  groqKeyKey: Buffer;
+  verifyGroqKey: VerifyGroqKey;
   runner: SyncRunner;
 }
 
 /** An error a route raises on purpose; the message is safe to show the client. */
 export class ApiError extends Error {
   constructor(
-    readonly statusCode: 400 | 404 | 409,
+    readonly statusCode: 400 | 404 | 409 | 503,
     readonly code: string,
   ) {
     super(code);

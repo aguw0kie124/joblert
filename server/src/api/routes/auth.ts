@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { hasGmailScope, type GoogleOAuth } from "../../auth/google.ts";
+import { groqKeyStatus } from "../../auth/groqKeys.ts";
 import { encrypt } from "../../auth/secrets.ts";
 import type { Db } from "../../db/client.ts";
 import { oauthTokens, syncState, users } from "../../db/schema.ts";
@@ -74,7 +75,10 @@ export async function authRoutes(app: FastifyInstance, { db, oauth, tokenKey, we
       const [user] = await tx
         .insert(users)
         .values({ googleSub: signIn.sub, email: signIn.email })
-        .onConflictDoUpdate({ target: users.googleSub, set: { email: signIn.email } })
+        .onConflictDoUpdate({
+          target: users.googleSub,
+          set: { email: signIn.email },
+        })
         .returning({ id: users.id });
 
       if (signIn.refreshToken) {
@@ -122,6 +126,8 @@ export async function authRoutes(app: FastifyInstance, { db, oauth, tokenKey, we
       gmailConnected: token !== undefined,
       lastSyncAt: sync?.lastRunAt ?? null,
       syncing: runner.isRunning(user.id),
+      // Until this is "ok" the dashboard asks for a key and nothing is synced.
+      groqKey: await groqKeyStatus(db, user.id),
     };
   });
 }

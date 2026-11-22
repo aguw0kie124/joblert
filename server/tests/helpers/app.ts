@@ -2,11 +2,18 @@ import type { FastifyInstance } from "fastify";
 import { vi } from "vitest";
 import { buildApp, type AppOptions } from "../../src/api/app.ts";
 import { GMAIL_SCOPE, type GoogleOAuth, type GoogleSignIn } from "../../src/auth/google.ts";
+import { saveGroqKey } from "../../src/auth/groqKeys.ts";
+import { deriveKey } from "../../src/auth/secrets.ts";
+import type { Classifier } from "../../src/pipeline/classify.ts";
+import type { Triager } from "../../src/pipeline/triage.ts";
 import type { TestDb } from "./db.ts";
 
 export const TOKEN_SECRET = "t".repeat(40);
 export const WEB_URL = "http://localhost:5173";
-export const PUBSUB = { topic: "projects/joblert/topics/gmail", token: "p".repeat(40) };
+export const PUBSUB = {
+  topic: "projects/joblert/topics/gmail",
+  token: "p".repeat(40),
+};
 
 export const googleSignIn = (overrides: Partial<GoogleSignIn> = {}): GoogleSignIn => ({
   sub: "google-sam",
@@ -28,7 +35,26 @@ export function fakeOAuth() {
 
 export type FakeOAuth = ReturnType<typeof fakeOAuth>;
 
-export function testApp(db: TestDb, oauth: GoogleOAuth, overrides: Partial<AppOptions> = {}) {
+/** What a test reads mail with. One classifier and triager stand in for every user's Groq key. */
+export interface TestIngest extends Pick<AppOptions["ingest"], "connect" | "threshold" | "now"> {
+  classifier?: Classifier;
+  triager?: Triager;
+}
+
+export type TestAppOptions = Omit<Partial<AppOptions>, "ingest"> & {
+  ingest?: TestIngest;
+};
+
+export function testApp(db: TestDb, oauth: GoogleOAuth, { ingest, ...overrides }: TestAppOptions = {}) {
+  const {
+    classifier = {
+      classify: async () => Promise.reject(new Error("no classifier in this test")),
+    },
+    triager = {
+      triage: async () => Promise.reject(new Error("no triage in this test")),
+    },
+    ...rest
+  } = ingest ?? { connect: async () => null, threshold: 0.85 };
   return buildApp({
     db,
     oauth,
@@ -36,14 +62,15 @@ export function testApp(db: TestDb, oauth: GoogleOAuth, overrides: Partial<AppOp
     tokenEncryptionKey: TOKEN_SECRET,
     publicUrl: "http://localhost:3000",
     webUrl: WEB_URL,
-    ingest: {
-      classifier: { classify: async () => Promise.reject(new Error("no classifier in this test")) },
-      connect: async () => null,
-      threshold: 0.85,
-      triager: { triage: async () => Promise.reject(new Error("no triage in this test")) },
-    },
+    ingest: { ...rest, models: () => ({ classifier, triager }) },
+    verifyGroqKey: async () => "ok",
     ...overrides,
   });
+}
+
+/** Stores a Groq key for a user directly, as if they had saved it on the setup screen. */
+export function giveGroqKey(db: TestDb, userId: string, key = "gsk_test_key") {
+  return saveGroqKey(db, deriveKey(TOKEN_SECRET, "groq-key"), userId, key);
 }
 
 /** The session cookie from a response, in the form a browser would send back. */

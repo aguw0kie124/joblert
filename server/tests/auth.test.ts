@@ -38,7 +38,7 @@ const me = (cookie?: string) =>
   app.inject({ method: "GET", url: "/api/me", headers: cookie ? { cookie } : {} });
 
 describe("connecting an inbox", () => {
-  test("starts Gmail's notifications and begins from now, without reading old mail", async () => {
+  test("waits for a Groq key, then starts Gmail's notifications and begins from now, without reading old mail", async () => {
     const gmail = new FakeGmail().add(mail("m1", "Thank you for applying to Stripe", new Date("2026-10-01T09:00:00Z")));
     gmail.historyId = "4242";
     const { classifier, classify } = fakeClassifier({});
@@ -47,7 +47,14 @@ describe("connecting an inbox", () => {
       ingest: { classifier, triager: fakeTriager([]).triager, connect: async () => gmail, threshold: 0.85 },
     });
 
-    await completeSignIn();
+    const { cookie } = await completeSignIn();
+    // Nothing is watched or read before the user has a key.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(gmail.watched).toEqual([]);
+    expect(await db.select().from(schema.syncState)).toEqual([]);
+
+    const saved = await app.inject({ method: "PUT", url: "/api/groq-key", headers: { cookie }, payload: { key: "gsk_x" } });
+    expect(saved.statusCode).toBe(204);
 
     await vi.waitFor(async () => expect(await db.select().from(schema.syncState)).toMatchObject([{ historyId: "4242" }]));
     expect(gmail.watched).toEqual([PUBSUB.topic]);
@@ -85,6 +92,7 @@ describe("signing in", () => {
       gmailConnected: true,
       lastSyncAt: null,
       syncing: expect.any(Boolean),
+      groqKey: "missing",
     });
   });
 

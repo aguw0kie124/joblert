@@ -2,6 +2,7 @@ import { z } from "zod";
 import { ClassifierError } from "./classify.ts";
 
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
+const GROQ_MODELS_URL = "https://api.groq.com/openai/v1/models";
 
 export interface GroqOptions {
   apiKey: string;
@@ -34,6 +35,20 @@ function retryDelayMs(response: Response, attempt: number): number {
   const retryAfter = Number(response.headers.get("retry-after"));
   const ms = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 1000 * 2 ** attempt;
   return Math.min(ms, MAX_RETRY_WAIT_MS);
+}
+
+export type GroqKeyCheck = "ok" | "invalid" | "unavailable";
+export type VerifyGroqKey = (apiKey: string) => Promise<GroqKeyCheck>;
+
+/** Asks Groq whether it accepts a key, by listing models: no tokens are spent. */
+export async function verifyGroqKey(apiKey: string, fetchImpl: typeof fetch = fetch): Promise<GroqKeyCheck> {
+  try {
+    const response = await fetchImpl(GROQ_MODELS_URL, { headers: { Authorization: `Bearer ${apiKey}` } });
+    if (response.ok) return "ok";
+    return response.status === 401 || response.status === 403 ? "invalid" : "unavailable";
+  } catch {
+    return "unavailable";
+  }
 }
 
 /** Zod schema → the JSON Schema Groq expects, without the `$schema` marker it rejects. */

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import * as schema from "../src/db/schema.ts";
 import { GmailError } from "../src/gmail/client.ts";
 import { ClassifierError } from "../src/pipeline/classify.ts";
-import { createSyncRunner, type SyncRunnerOptions } from "../src/pipeline/syncRunner.ts";
+import { createSyncRunner, type Models, type SyncRunnerOptions } from "../src/pipeline/syncRunner.ts";
 import { createUser, freshDb, seedCursor, type TestDb } from "./helpers/db.ts";
 import { FakeGmail, fakeClassifier, fakeTriager, mail, result } from "./helpers/inbox.ts";
 
@@ -28,11 +28,14 @@ async function connected(name: string) {
 const answers = () =>
   fakeClassifier({ [CONFIRMATION]: result("applied"), [REJECTION]: result("rejected") });
 
-const runner = (overrides: Partial<SyncRunnerOptions> = {}) =>
+type RunnerOverrides = Partial<SyncRunnerOptions> & Partial<Models>;
+
+const runner = ({ classifier = answers().classifier, triager = fakeTriager([]).triager, ...overrides }: RunnerOverrides = {}) =>
   createSyncRunner({
     db,
-    classifier: answers().classifier,
-    triager: fakeTriager([]).triager,
+    groqKey: async () => "gsk_test_key",
+    models: () => ({ classifier, triager }),
+    onGroqKeyRejected: async () => {},
     connect: async (userId) => inboxes.get(userId) ?? null,
     threshold: 0.85,
     topic: TOPIC,
@@ -92,6 +95,35 @@ describe("sync", () => {
 
     expect(await runner({ classifier }).sync(sam)).toBe(outcome);
     expect(await cursorOf(sam)).toBe("1");
+  });
+
+  test("an inbox without a Groq key is neither opened nor watched", async () => {
+    const connect = vi.fn(async (userId: string) => inboxes.get(userId) ?? null);
+
+    expect(await runner({ groqKey: async () => null, connect }).refresh(sam)).toBe("no_groq_key");
+
+    expect(connect).not.toHaveBeenCalled();
+    expect(inboxes.get(sam)!.watched).toEqual([]);
+  });
+
+  test("each user's mail is read with their own Groq key", async () => {
+    const alex = (await connected("alex")).id;
+    const models = vi.fn(() => ({ classifier: answers().classifier, triager: fakeTriager([]).triager }));
+    const sync = runner({ groqKey: async (userId) => `gsk_${userId}`, models });
+
+    await sync.sync(sam);
+    await sync.sync(alex);
+
+    expect(models.mock.calls).toEqual([[`gsk_${sam}`], [`gsk_${alex}`]]);
+  });
+
+  test("a key Groq rejects is reported so the user is asked for a new one", async () => {
+    inboxes.get(sam)!.add(mail("m1", CONFIRMATION, day(1)));
+    const { classifier } = fakeClassifier({ [CONFIRMATION]: new ClassifierError("auth", "bad key") });
+    const onGroqKeyRejected = vi.fn(async () => {});
+
+    expect(await runner({ classifier, onGroqKeyRejected }).sync(sam)).toBe("failed");
+    expect(onGroqKeyRejected).toHaveBeenCalledWith(sam);
   });
 
   test("a Gmail failure is worth retrying; a refused token is not", async () => {

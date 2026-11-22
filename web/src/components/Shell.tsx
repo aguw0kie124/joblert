@@ -1,18 +1,23 @@
 import { useState } from "react";
-import { Link, Outlet, useLocation } from "react-router";
+import { Link, Outlet, useLocation, useNavigate } from "react-router";
 import type { Me } from "../api.ts";
 import { relativeTime, shortDate } from "../format.ts";
 import { THEMES, applyTheme, storedTheme, type Theme } from "../theme.ts";
 import { useDeleteAccount, useRefreshAfterSync, useReview, useSignOut, useSync, useTick } from "../hooks.ts";
 import { ChartIcon, ChevronsIcon, InboxIcon, ListIcon, Logo, SyncIcon, WarningIcon } from "./ui.tsx";
 
-const THEME_LABELS: Record<Theme, string> = { system: "System", light: "Light", dark: "Dark" };
+const THEME_LABELS: Record<Theme, string> = {
+  system: "System",
+  light: "Light",
+  dark: "Dark",
+};
 
 function AccountMenu({ me }: { me: Me }) {
   const [open, setOpen] = useState(false);
   const [theme, setTheme] = useState(storedTheme);
   const signOut = useSignOut();
   const deleteAccount = useDeleteAccount();
+  const navigate = useNavigate();
 
   const confirmDelete = () => {
     const sure = window.confirm(
@@ -38,6 +43,15 @@ function AccountMenu({ me }: { me: Me }) {
         <div className="menu">
           <button type="button" onClick={nextTheme}>
             Theme: {THEME_LABELS[theme]}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              void navigate("/groq-key");
+            }}
+          >
+            Change Groq key
           </button>
           <button type="button" onClick={() => signOut.mutate()}>
             Sign out

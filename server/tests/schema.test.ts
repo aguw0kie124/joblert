@@ -15,13 +15,17 @@ const emailRow = (userId: string, gmailMessageId: string) => ({
 
 test("migrations create every table with row-level security on", async () => {
   const db = await freshDb();
-  const { rows } = await db.execute<{ relname: string; relrowsecurity: boolean }>(
+  const { rows } = await db.execute<{
+    relname: string;
+    relrowsecurity: boolean;
+  }>(
     "select relname, relrowsecurity from pg_class where relnamespace = 'public'::regnamespace and relkind = 'r' order by relname",
   );
   expect(rows.map((r) => r.relname)).toEqual([
     "applications",
     "emails",
     "events",
+    "groq_keys",
     "oauth_tokens",
     "review_items",
     "sync_state",
@@ -37,7 +41,13 @@ test("an application round-trips with its email and event", async () => {
 
   const [app] = await db
     .insert(schema.applications)
-    .values({ userId: user.id, company: "Acme", role: "Backend Engineer", appliedAt: now, source: "email" })
+    .values({
+      userId: user.id,
+      company: "Acme",
+      role: "Backend Engineer",
+      appliedAt: now,
+      source: "email",
+    })
     .returning();
   expect(app?.status).toBe("applied");
 
@@ -90,7 +100,11 @@ test("each user has one cursor and one token", async () => {
   await db.insert(schema.syncState).values({ userId: user.id, historyId: "100" });
   await expect(db.insert(schema.syncState).values({ userId: user.id, historyId: "200" })).rejects.toThrow();
 
-  const token = { userId: user.id, refreshTokenEncrypted: "ciphertext", scope: "gmail.readonly" };
+  const token = {
+    userId: user.id,
+    refreshTokenEncrypted: "ciphertext",
+    scope: "gmail.readonly",
+  };
   await db.insert(schema.oauthTokens).values(token);
   await expect(db.insert(schema.oauthTokens).values(token)).rejects.toThrow();
 });
@@ -110,17 +124,29 @@ test("deleting a user removes all of their data and nobody else's", async () => 
   for (const user of [sam, alex]) {
     const [app] = await db
       .insert(schema.applications)
-      .values({ userId: user.id, company: "Acme", role: "Engineer", appliedAt: now, source: "manual" })
+      .values({
+        userId: user.id,
+        company: "Acme",
+        role: "Engineer",
+        appliedAt: now,
+        source: "manual",
+      })
       .returning();
     const [email] = await db.insert(schema.emails).values(emailRow(user.id, "msg-1")).returning();
-    await db
-      .insert(schema.events)
-      .values({ userId: user.id, applicationId: app!.id, kind: "applied", source: "manual", occurredAt: now });
+    await db.insert(schema.events).values({
+      userId: user.id,
+      applicationId: app!.id,
+      kind: "applied",
+      source: "manual",
+      occurredAt: now,
+    });
     await db.insert(schema.reviewItems).values({ userId: user.id, emailId: email!.id, reason: "no_match" });
     await db.insert(schema.syncState).values({ userId: user.id, historyId: "1" });
-    await db
-      .insert(schema.oauthTokens)
-      .values({ userId: user.id, refreshTokenEncrypted: "ciphertext", scope: "gmail.readonly" });
+    await db.insert(schema.oauthTokens).values({
+      userId: user.id,
+      refreshTokenEncrypted: "ciphertext",
+      scope: "gmail.readonly",
+    });
   }
 
   await db.delete(schema.users).where(eq(schema.users.id, sam.id));

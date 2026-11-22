@@ -1,6 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router";
 import { ApiError } from "./api.ts";
 import { AddPanel, DetailPanel } from "./components/ApplicationPanel.tsx";
+import { GroqKeySetup } from "./components/GroqKeySetup.tsx";
 import { ApplicationsPage } from "./components/ApplicationsPage.tsx";
 import { InsightsPage } from "./components/InsightsPage.tsx";
 import { Landing } from "./components/Landing.tsx";
@@ -24,6 +25,8 @@ export function App() {
 
   if (me.error instanceof ApiError && me.error.status === 401) return <Landing />;
   if (!me.data) return me.isError ? <Unreachable onRetry={() => void me.refetch()} /> : null;
+  // Right after the first sign-in, and whenever Groq stops accepting the saved key.
+  if (me.data.groqKey !== "ok") return <GroqKeySetup me={me.data} />;
 
   return (
     <BrowserRouter>
@@ -35,6 +38,7 @@ export function App() {
           </Route>
           <Route path="review" element={<ReviewPage />} />
           <Route path="insights" element={<InsightsPage />} />
+          <Route path="groq-key" element={<GroqKeySetup me={me.data} />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>

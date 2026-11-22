@@ -8,7 +8,17 @@ import { GoogleAuthError } from "../src/auth/google.ts";
 import * as schema from "../src/db/schema.ts";
 import { ClassifierError } from "../src/pipeline/classify.ts";
 import type { ReviewReason, Status } from "../src/status.ts";
-import { completeSignIn, fakeOAuth, googleSignIn, PUBSUB, testApp, type FakeOAuth } from "./helpers/app.ts";
+import { decrypt, deriveKey } from "../src/auth/secrets.ts";
+import {
+  completeSignIn,
+  fakeOAuth,
+  giveGroqKey,
+  googleSignIn,
+  PUBSUB,
+  testApp,
+  TOKEN_SECRET,
+  type FakeOAuth,
+} from "./helpers/app.ts";
 import { freshDb, seedCursor, type TestDb } from "./helpers/db.ts";
 import { FakeGmail, fakeClassifier, fakeTriager, mail, result } from "./helpers/inbox.ts";
 
@@ -39,7 +49,7 @@ beforeEach(async () => {
   alex = await signIn("alex");
 });
 
-type Method = "GET" | "POST" | "PATCH" | "DELETE";
+type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 const call = (who: { cookie: string } | null, method: Method, url: string, payload?: object) =>
   app.inject({ method, url, headers: who ? { cookie: who.cookie } : {}, ...(payload ? { payload } : {}) });
 
@@ -608,7 +618,8 @@ describe("syncing from the dashboard", () => {
       ingest: { classifier, triager: fakeTriager([]).triager, connect: async () => gmail, threshold: 0.85 },
     });
     const user = await signIn("sam");
-    // Signing in runs a first sync, which reads nothing and marks where the next one starts.
+    // Saving a key runs a first sync, which reads nothing and marks where the next one starts.
+    expect((await call(user, "PUT", "/api/groq-key", { key: "gsk_sam" })).statusCode).toBe(204);
     if (gmail) await vi.waitFor(async () => expect(await db.select().from(schema.syncState)).toHaveLength(1));
     return user;
   }
@@ -652,6 +663,64 @@ describe("syncing from the dashboard", () => {
   });
 });
 
+describe("Groq key", () => {
+  const status = async (who: { cookie: string }) => (await call(who, "GET", "/api/me")).json().groqKey;
+  const stored = async (userId: string) =>
+    (await db.select().from(schema.groqKeys).where(eq(schema.groqKeys.userId, userId)))[0];
+
+  test("is missing until saved, then stored encrypted", async () => {
+    expect(await status(sam)).toBe("missing");
+
+    expect((await call(sam, "PUT", "/api/groq-key", { key: "  gsk_sam_secret \n" })).statusCode).toBe(204);
+
+    expect(await status(sam)).toBe("ok");
+    const row = await stored(sam.id);
+    expect(row!.keyEncrypted).not.toContain("gsk_sam_secret");
+    expect(decrypt(row!.keyEncrypted, deriveKey(TOKEN_SECRET, "groq-key"))).toBe("gsk_sam_secret");
+  });
+
+  test.each([
+    ["invalid", 400, "invalid_groq_key"],
+    ["unavailable", 503, "groq_unavailable"],
+  ] as const)("is not saved when Groq answers %s", async (check, code, error) => {
+    app = await testApp(db, oauth, { verifyGroqKey: async () => check });
+    const response = await call(sam, "PUT", "/api/groq-key", {
+      key: "gsk_bad",
+    });
+    expect(response.statusCode).toBe(code);
+    expect(response.json()).toEqual({ error });
+    expect(await stored(sam.id)).toBeUndefined();
+  });
+
+  test("is refused when empty, and needs a session", async () => {
+    expect((await call(sam, "PUT", "/api/groq-key", { key: "   " })).statusCode).toBe(400);
+    expect((await call(null, "PUT", "/api/groq-key", { key: "gsk_x" })).statusCode).toBe(401);
+  });
+
+  test("shows as invalid after Groq rejected it, and saving a new one fixes that", async () => {
+    await giveGroqKey(db, sam.id);
+    await db.update(schema.groqKeys).set({ invalidAt: new Date() }).where(eq(schema.groqKeys.userId, sam.id));
+    expect(await status(sam)).toBe("invalid");
+
+    await call(sam, "PUT", "/api/groq-key", { key: "gsk_new" });
+    expect(await status(sam)).toBe("ok");
+  });
+
+  test("one user's key never touches another's", async () => {
+    await giveGroqKey(db, alex.id, "gsk_alex");
+    await call(sam, "PUT", "/api/groq-key", { key: "gsk_sam" });
+
+    expect(decrypt((await stored(alex.id))!.keyEncrypted, deriveKey(TOKEN_SECRET, "groq-key"))).toBe("gsk_alex");
+    expect(await status(alex)).toBe("ok");
+  });
+
+  test("a sync without one is refused", async () => {
+    const response = await call(sam, "POST", "/api/sync");
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({ error: "groq_key_missing" });
+  });
+});
+
 describe("Gmail notifications", () => {
   const CONFIRMATION = "Thank you for applying to Stripe";
   let inboxes: Map<string, FakeGmail>;
@@ -688,7 +757,14 @@ describe("Gmail notifications", () => {
     for (const user of [sam, alex]) {
       inboxes.set(user.id, new FakeGmail().add(mail("m1", CONFIRMATION, day(1))));
       await seedCursor(db, user.id);
+      await giveGroqKey(db, user.id);
     }
+  });
+
+  test("are acknowledged without syncing for a user with no Groq key", async () => {
+    await db.delete(schema.groqKeys).where(eq(schema.groqKeys.userId, sam.id));
+    expect((await notify("sam@example.com")).statusCode).toBe(204);
+    expect(await applications()).toEqual([]);
   });
 
   test("sync the inbox they name, and nobody else's", async () => {

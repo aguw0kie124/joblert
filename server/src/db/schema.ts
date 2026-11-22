@@ -140,3 +140,12 @@ export const oauthTokens = pgTable("oauth_tokens", {
   scope: text("scope").notNull(),
   updatedAt: timestamptz("updated_at").notNull().defaultNow(),
 }).enableRLS();
+
+// One row per user: their own Groq API key, encrypted with TOKEN_ENCRYPTION_KEY. Every sync uses it.
+export const groqKeys = pgTable("groq_keys", {
+  userId: userId().primaryKey(),
+  keyEncrypted: text("key_encrypted").notNull(),
+  // Set when Groq rejected the key during a sync; syncs stop until the user saves a new one.
+  invalidAt: timestamptz("invalid_at"),
+  updatedAt: timestamptz("updated_at").notNull().defaultNow(),
+}).enableRLS();
